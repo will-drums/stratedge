@@ -1537,5 +1537,264 @@ export function resolveEnterpriseViewportTier(
   };
 }
 
+export type PriceAlertChannel = 'email' | 'sms';
+
+export interface PurchasedProductAlertLike {
+  id: string;
+  licenseKey: string;
+  customerEmail: string;
+  customerName: string;
+  indicatorId: string;
+  indicatorName: string;
+  billingCycle: 'Monthly' | 'Annual' | 'Lifetime';
+  tradingViewUsername: string;
+  tvAccessStatus: 'Provisioned' | 'Pending Username' | 'Revoked';
+  expiresAt: string;
+  emailAlertsEnabled?: boolean;
+  smsAlertsEnabled?: boolean;
+}
+
+export interface IndicatorPriceAlertOverride {
+  emailEnabled?: boolean;
+  smsEnabled?: boolean;
+  updatedAt?: string;
+}
+
+export interface IndicatorPriceAlertPreference {
+  licenseId: string;
+  licenseKey: string;
+  indicatorId: string;
+  indicatorName: string;
+  billingCycle: 'Monthly' | 'Annual' | 'Lifetime';
+  tvAccessStatus: 'Provisioned' | 'Pending Username' | 'Revoked';
+  tradingViewUsername: string;
+  expiresAt: string;
+  emailEnabled: boolean;
+  smsEnabled: boolean;
+  signalTriggerLabel: string;
+  monitoredTickersLabel: string;
+  updatedAt: string;
+}
+
+export interface PriceAlertSummaryMetrics {
+  totalSubscribedIndicators: number;
+  emailEnabledCount: number;
+  smsEnabledCount: number;
+  dualChannelCount: number;
+  anyChannelActiveCount: number;
+  fullyMutedCount: number;
+  activeCoveragePct: number;
+}
+
+export const PriceAlertDeliveryConfigSchema = z.object({
+  emailDestination: z
+    .string()
+    .trim()
+    .email('Enter a valid email address for price alert delivery'),
+  smsPhoneDestination: z
+    .string()
+    .trim()
+    .refine(
+      (val) => {
+        const digits = val.replace(/[^\d]/g, '');
+        return digits.length >= 10 && digits.length <= 15;
+      },
+      {
+        message: 'Enter a valid 10 to 15 digit SMS mobile number (e.g. +1 212-555-0194)',
+      }
+    ),
+});
+
+export type PriceAlertDeliveryConfig = z.infer<typeof PriceAlertDeliveryConfigSchema>;
+
+export function resolveIndicatorAlertTriggerSpec(
+  indicatorId: string,
+  indicatorName: string = ''
+): {
+  signalTriggerLabel: string;
+  monitoredTickersLabel: string;
+} {
+  const normalizedId = (indicatorId || '').toLowerCase();
+  const normalizedName = (indicatorName || '').toLowerCase();
+
+  if (normalizedId.includes('gamma') || normalizedName.includes('gamma')) {
+    return {
+      signalTriggerLabel: '0DTE Zero-Gamma Flip & Call/Put Wall Breach',
+      monitoredTickersLabel: 'SPX · ES1! · NDX · QQQ',
+    };
+  }
+
+  if (normalizedId.includes('flow') || normalizedName.includes('flow')) {
+    return {
+      signalTriggerLabel: 'CVD Absorption Divergence & >2.2σ Dark-Pool Sweep',
+      monitoredTickersLabel: 'ES1! · NQ1! · NVDA · SPY',
+    };
+  }
+
+  if (normalizedId.includes('structure') || normalizedName.includes('structure')) {
+    return {
+      signalTriggerLabel: 'Confirmed 1m/5m BOS/CHoCH & ±2.5σ AVWAP Touch',
+      monitoredTickersLabel: 'ES1! · NQ1! · CL1! · GC1!',
+    };
+  }
+
+  if (normalizedId.includes('bundle') || normalizedName.includes('bundle') || normalizedName.includes('trinity')) {
+    return {
+      signalTriggerLabel: 'Full Trinity Confluence (GEX Flip + CVD Sweep + BOS)',
+      monitoredTickersLabel: 'SPX · ES1! · NQ1! · SPY',
+    };
+  }
+
+  return {
+    signalTriggerLabel: 'Confirmed Quantitative Regime & Key Level Alert',
+    monitoredTickersLabel: 'ES1! · NQ1! · SPX',
+  };
+}
+
+export function hydrateIndicatorPriceAlerts(
+  licenses: PurchasedProductAlertLike[],
+  overrides: Record<string, IndicatorPriceAlertOverride> = {},
+  defaultUpdatedAt: string = '2026-11-01 09:30:00 UTC'
+): IndicatorPriceAlertPreference[] {
+  if (!Array.isArray(licenses)) return [];
+
+  return licenses.map((lic) => {
+    const ov = overrides[lic.id] || {};
+    const isProvisioned = lic.tvAccessStatus === 'Provisioned';
+
+    const defaultEmail =
+      typeof lic.emailAlertsEnabled === 'boolean'
+        ? lic.emailAlertsEnabled
+        : isProvisioned;
+
+    const defaultSms =
+      typeof lic.smsAlertsEnabled === 'boolean'
+        ? lic.smsAlertsEnabled
+        : isProvisioned &&
+          (lic.billingCycle === 'Lifetime' || lic.billingCycle === 'Annual');
+
+    const emailEnabled =
+      typeof ov.emailEnabled === 'boolean' ? ov.emailEnabled : defaultEmail;
+    const smsEnabled =
+      typeof ov.smsEnabled === 'boolean' ? ov.smsEnabled : defaultSms;
+
+    const spec = resolveIndicatorAlertTriggerSpec(lic.indicatorId, lic.indicatorName);
+
+    return {
+      licenseId: lic.id,
+      licenseKey: lic.licenseKey,
+      indicatorId: lic.indicatorId,
+      indicatorName: lic.indicatorName,
+      billingCycle: lic.billingCycle,
+      tvAccessStatus: lic.tvAccessStatus,
+      tradingViewUsername: lic.tradingViewUsername,
+      expiresAt: lic.expiresAt,
+      emailEnabled,
+      smsEnabled,
+      signalTriggerLabel: spec.signalTriggerLabel,
+      monitoredTickersLabel: spec.monitoredTickersLabel,
+      updatedAt: ov.updatedAt || defaultUpdatedAt,
+    };
+  });
+}
+
+export function toggleIndicatorPriceAlert(
+  overrides: Record<string, IndicatorPriceAlertOverride>,
+  license: PurchasedProductAlertLike,
+  channel: PriceAlertChannel,
+  explicitValue?: boolean,
+  nowLabel: string = '2026-11-01 10:00:00 UTC'
+): Record<string, IndicatorPriceAlertOverride> {
+  const [currentPref] = hydrateIndicatorPriceAlerts([license], overrides, nowLabel);
+  const currentChannelState =
+    channel === 'email' ? currentPref.emailEnabled : currentPref.smsEnabled;
+  const nextValue =
+    typeof explicitValue === 'boolean' ? explicitValue : !currentChannelState;
+
+  const existingOverride = overrides[license.id] || {};
+  return {
+    ...overrides,
+    [license.id]: {
+      emailEnabled:
+        channel === 'email' ? nextValue : currentPref.emailEnabled,
+      smsEnabled:
+        channel === 'sms' ? nextValue : currentPref.smsEnabled,
+      updatedAt: nowLabel,
+      ...existingOverride,
+      ...(channel === 'email'
+        ? { emailEnabled: nextValue, smsEnabled: currentPref.smsEnabled, updatedAt: nowLabel }
+        : { emailEnabled: currentPref.emailEnabled, smsEnabled: nextValue, updatedAt: nowLabel }),
+    },
+  };
+}
+
+export function setAllIndicatorPriceAlerts(
+  licenses: PurchasedProductAlertLike[],
+  overrides: Record<string, IndicatorPriceAlertOverride>,
+  channel: PriceAlertChannel | 'all',
+  enabled: boolean,
+  nowLabel: string = '2026-11-01 10:00:00 UTC'
+): Record<string, IndicatorPriceAlertOverride> {
+  const currentList = hydrateIndicatorPriceAlerts(licenses, overrides, nowLabel);
+  const nextOverrides: Record<string, IndicatorPriceAlertOverride> = { ...overrides };
+
+  for (const pref of currentList) {
+    nextOverrides[pref.licenseId] = {
+      emailEnabled:
+        channel === 'email' || channel === 'all' ? enabled : pref.emailEnabled,
+      smsEnabled:
+        channel === 'sms' || channel === 'all' ? enabled : pref.smsEnabled,
+      updatedAt: nowLabel,
+    };
+  }
+
+  return nextOverrides;
+}
+
+export function computePriceAlertSummary(
+  preferences: IndicatorPriceAlertPreference[]
+): PriceAlertSummaryMetrics {
+  const totalSubscribedIndicators = preferences.length;
+  if (totalSubscribedIndicators === 0) {
+    return {
+      totalSubscribedIndicators: 0,
+      emailEnabledCount: 0,
+      smsEnabledCount: 0,
+      dualChannelCount: 0,
+      anyChannelActiveCount: 0,
+      fullyMutedCount: 0,
+      activeCoveragePct: 0,
+    };
+  }
+
+  let emailEnabledCount = 0;
+  let smsEnabledCount = 0;
+  let dualChannelCount = 0;
+  let anyChannelActiveCount = 0;
+
+  for (const pref of preferences) {
+    if (pref.emailEnabled) emailEnabledCount += 1;
+    if (pref.smsEnabled) smsEnabledCount += 1;
+    if (pref.emailEnabled && pref.smsEnabled) dualChannelCount += 1;
+    if (pref.emailEnabled || pref.smsEnabled) anyChannelActiveCount += 1;
+  }
+
+  const fullyMutedCount = totalSubscribedIndicators - anyChannelActiveCount;
+  const activeCoveragePct = Math.round(
+    (anyChannelActiveCount / totalSubscribedIndicators) * 100
+  );
+
+  return {
+    totalSubscribedIndicators,
+    emailEnabledCount,
+    smsEnabledCount,
+    dualChannelCount,
+    anyChannelActiveCount,
+    fullyMutedCount,
+    activeCoveragePct,
+  };
+}
+
+
 
 

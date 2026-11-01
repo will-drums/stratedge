@@ -61,6 +61,8 @@ export interface LicenseRecord {
   tosStudyFilename: string;
   provisionedAt: string;
   expiresAt: string;
+  emailAlertsEnabled?: boolean;
+  smsAlertsEnabled?: boolean;
 }
 
 export interface WebhookLogItem {

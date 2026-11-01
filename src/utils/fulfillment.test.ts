@@ -29,7 +29,14 @@ import {
   computeLiquidityDepthMatrix,
   ENTERPRISE_BREAKPOINTS_2026,
   resolveEnterpriseViewportTier,
+  PriceAlertDeliveryConfigSchema,
+  resolveIndicatorAlertTriggerSpec,
+  hydrateIndicatorPriceAlerts,
+  toggleIndicatorPriceAlert,
+  setAllIndicatorPriceAlerts,
+  computePriceAlertSummary,
   type SupportTicketRecord,
+  type PurchasedProductAlertLike,
 } from './fulfillment';
 
 test('TradingViewUsernameSchema validates legitimate handles and rejects invalid symbols', () => {
@@ -632,6 +639,121 @@ test('SupportTicketing messaging thread, lifecycle progress, and client status s
     assert.equal(summary.totalMessages, 4);
   }
 });
+
+test('Email and SMS price alert hydration, per-indicator toggling, bulk updates, and delivery validation work with existing LicenseRecord data structure', () => {
+  const sampleLicenses: PurchasedProductAlertLike[] = [
+    {
+      id: 'lic-1',
+      licenseKey: 'SE-GAMM-8841-A9C2',
+      customerEmail: 'marcus.vance@apexquant.io',
+      customerName: 'Marcus Vance',
+      indicatorId: 'se-algo-gamma',
+      indicatorName: 'StratEdge Algo Gamma',
+      billingCycle: 'Annual',
+      tradingViewUsername: 'MarcusVance_ES',
+      tvAccessStatus: 'Provisioned',
+      expiresAt: '2027-10-31',
+    },
+    {
+      id: 'lic-2',
+      licenseKey: 'SE-FLOW-4419-D8A1',
+      customerEmail: 'marcus.vance@apexquant.io',
+      customerName: 'Marcus Vance',
+      indicatorId: 'se-algo-flow',
+      indicatorName: 'StratEdge Algo Flow',
+      billingCycle: 'Monthly',
+      tradingViewUsername: 'MarcusVance_ES',
+      tvAccessStatus: 'Provisioned',
+      expiresAt: '2026-11-30',
+    },
+  ];
+
+  // Initial hydration from existing purchased products
+  const initialPrefs = hydrateIndicatorPriceAlerts(sampleLicenses, {});
+  assert.equal(initialPrefs.length, 2);
+  assert.equal(initialPrefs[0].emailEnabled, true);
+  assert.equal(initialPrefs[0].smsEnabled, true);
+  assert.equal(
+    initialPrefs[0].signalTriggerLabel,
+    '0DTE Zero-Gamma Flip & Call/Put Wall Breach'
+  );
+  assert.equal(initialPrefs[1].emailEnabled, true);
+  assert.equal(initialPrefs[1].smsEnabled, false); // Monthly second license defaults SMS to false
+
+  const initialSummary = computePriceAlertSummary(initialPrefs);
+  assert.equal(initialSummary.totalSubscribedIndicators, 2);
+  assert.equal(initialSummary.emailEnabledCount, 2);
+  assert.equal(initialSummary.smsEnabledCount, 1);
+  assert.equal(initialSummary.dualChannelCount, 1);
+  assert.equal(initialSummary.activeCoveragePct, 100);
+
+  // Toggle SMS alert ON for lic-2
+  let overrides = toggleIndicatorPriceAlert(
+    {},
+    sampleLicenses[1],
+    'sms',
+    undefined,
+    '2026-11-01 10:15:00 UTC'
+  );
+  let updatedPrefs = hydrateIndicatorPriceAlerts(sampleLicenses, overrides);
+  assert.equal(updatedPrefs[1].smsEnabled, true);
+  assert.equal(updatedPrefs[1].emailEnabled, true);
+
+  // Toggle Email alert OFF for lic-1
+  overrides = toggleIndicatorPriceAlert(
+    overrides,
+    sampleLicenses[0],
+    'email',
+    undefined,
+    '2026-11-01 10:16:00 UTC'
+  );
+  updatedPrefs = hydrateIndicatorPriceAlerts(sampleLicenses, overrides);
+  assert.equal(updatedPrefs[0].emailEnabled, false);
+  assert.equal(updatedPrefs[0].smsEnabled, true);
+
+  // Bulk mute all channels
+  overrides = setAllIndicatorPriceAlerts(
+    sampleLicenses,
+    overrides,
+    'all',
+    false,
+    '2026-11-01 10:18:00 UTC'
+  );
+  updatedPrefs = hydrateIndicatorPriceAlerts(sampleLicenses, overrides);
+  const mutedSummary = computePriceAlertSummary(updatedPrefs);
+  assert.equal(mutedSummary.emailEnabledCount, 0);
+  assert.equal(mutedSummary.smsEnabledCount, 0);
+  assert.equal(mutedSummary.fullyMutedCount, 2);
+  assert.equal(mutedSummary.activeCoveragePct, 0);
+
+  // Bulk enable Email channel
+  overrides = setAllIndicatorPriceAlerts(
+    sampleLicenses,
+    overrides,
+    'email',
+    true,
+    '2026-11-01 10:20:00 UTC'
+  );
+  updatedPrefs = hydrateIndicatorPriceAlerts(sampleLicenses, overrides);
+  const emailSummary = computePriceAlertSummary(updatedPrefs);
+  assert.equal(emailSummary.emailEnabledCount, 2);
+  assert.equal(emailSummary.smsEnabledCount, 0);
+  assert.equal(emailSummary.activeCoveragePct, 100);
+
+  // Validate delivery endpoint schema
+  const validDelivery = PriceAlertDeliveryConfigSchema.safeParse({
+    emailDestination: 'marcus.vance@apexquant.io',
+    smsPhoneDestination: '+1 (212) 555-0194',
+  });
+  assert.equal(validDelivery.success, true);
+
+  const invalidDelivery = PriceAlertDeliveryConfigSchema.safeParse({
+    emailDestination: 'invalid-email',
+    smsPhoneDestination: '123',
+  });
+  assert.equal(invalidDelivery.success, false);
+});
+
 
 
 

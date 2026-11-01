@@ -1,7 +1,17 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
 import { usePlatformStore, type LicenseRecord } from '../stores/platformStore';
-import { TvSyncSchema } from '../utils/fulfillment';
+import {
+  TvSyncSchema,
+  PriceAlertDeliveryConfigSchema,
+  hydrateIndicatorPriceAlerts,
+  toggleIndicatorPriceAlert,
+  setAllIndicatorPriceAlerts,
+  computePriceAlertSummary,
+  type PriceAlertChannel,
+  type IndicatorPriceAlertOverride,
+  type IndicatorPriceAlertPreference,
+} from '../utils/fulfillment';
 import SupportTicketing from './SupportTicketing.vue';
 
 const emit = defineEmits<{
@@ -22,7 +32,7 @@ const gateSubmitting = ref(false);
 
 // Private Client Dashboard Sub-Navigation Tabs
 const activePortalTab = ref<
-  'indicators' | 'guides' | 'support' | 'subscriptions' | 'invoices' | 'settings'
+  'indicators' | 'alerts' | 'guides' | 'support' | 'subscriptions' | 'invoices' | 'settings'
 >('indicators');
 
 // TradingView Username Re-Sync per License
@@ -90,18 +100,146 @@ const supportTicketConfirmation = ref<{
   createdAt: string;
 } | null>(null);
 
+// Subscribed Indicator Email & SMS Price Alert State (using store.customerLicenses)
+const priceAlertOverrides = ref<Record<string, IndicatorPriceAlertOverride>>({});
+const alertEmailDestination = ref(store.activeCustomerEmail);
+const alertSmsDestination = ref('+1 (212) 555-0194');
+const alertDeliveryError = ref('');
+const lastDispatchedAlertBanner = ref<{
+  indicatorName: string;
+  licenseKey: string;
+  channelsLabel: string;
+  triggerLabel: string;
+  timestamp: string;
+} | null>(null);
+
+const hydratedPriceAlerts = computed<IndicatorPriceAlertPreference[]>(() =>
+  hydrateIndicatorPriceAlerts(store.customerLicenses, priceAlertOverrides.value)
+);
+
+const priceAlertSummary = computed(() =>
+  computePriceAlertSummary(hydratedPriceAlerts.value)
+);
+
 watch(
   () => [
     store.activeCustomerName,
     store.activeTradingViewHandle,
     store.activeTosAccountId,
+    store.activeCustomerEmail,
   ],
-  ([name, tv, tos]) => {
+  ([name, tv, tos, email]) => {
     profileNameDraft.value = name;
     profileTvDraft.value = tv;
     profileTosDraft.value = tos;
+    if (email) {
+      alertEmailDestination.value = email;
+    }
   }
 );
+
+function handleTogglePriceAlert(lic: LicenseRecord, channel: PriceAlertChannel) {
+  const nowStamp = new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+  priceAlertOverrides.value = toggleIndicatorPriceAlert(
+    priceAlertOverrides.value,
+    lic,
+    channel,
+    undefined,
+    nowStamp
+  );
+  const updated = priceAlertOverrides.value[lic.id];
+  if (updated) {
+    lic.emailAlertsEnabled = updated.emailEnabled;
+    lic.smsAlertsEnabled = updated.smsEnabled;
+  }
+  const channelLabel = channel === 'email' ? 'Email' : 'SMS';
+  const nextState =
+    channel === 'email' ? updated?.emailEnabled : updated?.smsEnabled;
+  store.showNotification(
+    'info',
+    `${channelLabel} Price Alerts ${nextState ? 'Enabled' : 'Disabled'}`,
+    `${lic.indicatorName} (${lic.licenseKey}) ${channelLabel} alerts are now ${nextState ? 'ON' : 'OFF'}.`
+  );
+}
+
+function handleBulkPriceAlerts(channel: PriceAlertChannel | 'all', enabled: boolean) {
+  const nowStamp = new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+  priceAlertOverrides.value = setAllIndicatorPriceAlerts(
+    store.customerLicenses,
+    priceAlertOverrides.value,
+    channel,
+    enabled,
+    nowStamp
+  );
+  for (const lic of store.customerLicenses) {
+    const ov = priceAlertOverrides.value[lic.id];
+    if (ov) {
+      lic.emailAlertsEnabled = ov.emailEnabled;
+      lic.smsAlertsEnabled = ov.smsEnabled;
+    }
+  }
+  const label =
+    channel === 'all'
+      ? 'All Email & SMS Price Alerts'
+      : channel === 'email'
+      ? 'All Email Price Alerts'
+      : 'All SMS Price Alerts';
+  store.showNotification(
+    'success',
+    `${label} ${enabled ? 'Enabled' : 'Muted'}`,
+    `Updated ${store.customerLicenses.length} subscribed indicator license(s) for ${store.activeCustomerEmail}.`
+  );
+}
+
+function saveAlertDeliveryEndpoints() {
+  alertDeliveryError.value = '';
+  const parsed = PriceAlertDeliveryConfigSchema.safeParse({
+    emailDestination: alertEmailDestination.value,
+    smsPhoneDestination: alertSmsDestination.value,
+  });
+  if (!parsed.success) {
+    alertDeliveryError.value =
+      parsed.error.issues[0]?.message || 'Invalid alert delivery destination.';
+    return;
+  }
+  alertEmailDestination.value = parsed.data.emailDestination;
+  alertSmsDestination.value = parsed.data.smsPhoneDestination;
+  store.showNotification(
+    'success',
+    'Price Alert Delivery Endpoints Saved',
+    `Routing subscribed indicator alerts to ${parsed.data.emailDestination} and ${parsed.data.smsPhoneDestination}.`
+  );
+}
+
+function dispatchTestPriceAlert(pref: IndicatorPriceAlertPreference) {
+  const activeChannels: string[] = [];
+  if (pref.emailEnabled) activeChannels.push(`Email (${alertEmailDestination.value})`);
+  if (pref.smsEnabled) activeChannels.push(`SMS (${alertSmsDestination.value})`);
+
+  if (activeChannels.length === 0) {
+    store.showNotification(
+      'error',
+      'All Channels Muted for Indicator',
+      `Enable Email or SMS price alerts on ${pref.indicatorName} (${pref.licenseKey}) before dispatching a test alert.`
+    );
+    return;
+  }
+
+  const nowStamp = new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+  const channelsLabel = activeChannels.join(' + ');
+  lastDispatchedAlertBanner.value = {
+    indicatorName: pref.indicatorName,
+    licenseKey: pref.licenseKey,
+    channelsLabel,
+    triggerLabel: pref.signalTriggerLabel,
+    timestamp: nowStamp,
+  };
+  store.showNotification(
+    'success',
+    `Test Price Alert Dispatched: ${pref.indicatorName}`,
+    `Delivered "${pref.signalTriggerLabel}" test signal via ${channelsLabel}.`
+  );
+}
 
 async function handleGateLogin() {
   gateError.value = '';
@@ -964,6 +1102,15 @@ async function copyText(text: string, label: string) {
             <button
               type="button"
               class="segmented-btn"
+              :class="{ active: activePortalTab === 'alerts' }"
+              data-testid="tab-price-alerts"
+              @click="activePortalTab = 'alerts'"
+            >
+              Price Alerts ({{ priceAlertSummary.emailEnabledCount }} Email · {{ priceAlertSummary.smsEnabledCount }} SMS)
+            </button>
+            <button
+              type="button"
+              class="segmented-btn"
               :class="{ active: activePortalTab === 'guides' }"
               data-testid="tab-installation-guides"
               @click="activePortalTab = 'guides'"
@@ -1226,6 +1373,434 @@ async function copyText(text: string, label: string) {
             <pre>{{ activeArtifactPreview.content }}</pre>
           </div>
         </div>
+
+        <!-- =================================================================
+             SUBSCRIBED INDICATOR PRICE ALERTS SECTION (EMAIL & SMS TOGGLES)
+             Uses existing store.customerLicenses (LicenseRecord) data structure.
+             Rendered directly in the main Purchased Indicators view AND in the
+             dedicated Price Alerts tab for immediate visibility.
+             ================================================================= -->
+        <section
+          v-if="activePortalTab === 'indicators' || activePortalTab === 'alerts'"
+          class="bento-panel"
+          :style="{ marginTop: activePortalTab === 'indicators' ? '28px' : '0' }"
+          data-testid="subscribed-indicator-price-alerts-section"
+          aria-labelledby="price-alerts-section-heading"
+        >
+          <!-- Section Header & Bulk Controls -->
+          <div
+            style="
+              display: flex;
+              justify-content: space-between;
+              align-items: flex-start;
+              gap: 16px;
+              flex-wrap: wrap;
+              padding-bottom: 18px;
+              border-bottom: 1px solid var(--border-hairline);
+            "
+          >
+            <div>
+              <div class="meta-line">
+                <span class="meta-accent">Real-Time Signal Routing</span>
+                <span class="meta-sep" aria-hidden="true">·</span>
+                <span class="mono">
+                  {{ priceAlertSummary.totalSubscribedIndicators }} Subscribed Indicator(s)
+                </span>
+                <span class="meta-sep" aria-hidden="true">·</span>
+                <span class="mono" style="color: var(--accent-emerald-bright);">
+                  {{ priceAlertSummary.activeCoveragePct }}% Alert Coverage
+                </span>
+              </div>
+              <h2
+                id="price-alerts-section-heading"
+                style="
+                  font-family: var(--font-display);
+                  font-size: 1.35rem;
+                  font-weight: 700;
+                  margin-top: 6px;
+                "
+              >
+                Subscribed Indicator Price Alerts (Email &amp; SMS)
+              </h2>
+              <p
+                style="
+                  color: var(--text-secondary);
+                  font-size: 0.875rem;
+                  margin-top: 4px;
+                  max-width: 68ch;
+                "
+              >
+                Toggle automated <strong>Email</strong> or <strong>SMS</strong> price and regime
+                alerts for each of your purchased indicators bound to
+                <span class="mono" style="color: var(--text-primary);">{{ store.activeCustomerEmail }}</span>.
+              </p>
+            </div>
+
+            <!-- Bulk Channel Action Buttons -->
+            <div
+              v-if="store.customerLicenses.length > 0"
+              style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center;"
+            >
+              <button
+                type="button"
+                class="btn-secondary"
+                style="padding: 8px 12px; min-height: 36px; font-size: 0.75rem;"
+                data-testid="bulk-enable-email-alerts-btn"
+                @click="handleBulkPriceAlerts('email', true)"
+              >
+                Enable All Email
+              </button>
+              <button
+                type="button"
+                class="btn-secondary"
+                style="padding: 8px 12px; min-height: 36px; font-size: 0.75rem;"
+                data-testid="bulk-enable-sms-alerts-btn"
+                @click="handleBulkPriceAlerts('sms', true)"
+              >
+                Enable All SMS
+              </button>
+              <button
+                type="button"
+                class="btn-ghost"
+                style="padding: 8px 12px; min-height: 36px; font-size: 0.75rem;"
+                data-testid="bulk-mute-all-alerts-btn"
+                @click="handleBulkPriceAlerts('all', false)"
+              >
+                Mute All Alerts
+              </button>
+            </div>
+          </div>
+
+          <!-- Price Alert Summary KPI Bar -->
+          <div
+            class="kpi-strip"
+            style="margin-top: 18px; margin-bottom: 18px;"
+            data-testid="price-alerts-summary-strip"
+          >
+            <div class="kpi-item">
+              <span class="kpi-number mono" data-testid="kpi-email-alerts-active">
+                {{ priceAlertSummary.emailEnabledCount }} / {{ priceAlertSummary.totalSubscribedIndicators }}
+              </span>
+              <span class="kpi-label">Email Price Alerts Active</span>
+              <span class="kpi-context mono">{{ alertEmailDestination }}</span>
+            </div>
+            <div class="kpi-item">
+              <span class="kpi-number mono" data-testid="kpi-sms-alerts-active">
+                {{ priceAlertSummary.smsEnabledCount }} / {{ priceAlertSummary.totalSubscribedIndicators }}
+              </span>
+              <span class="kpi-label">SMS Price Alerts Active</span>
+              <span class="kpi-context mono">{{ alertSmsDestination }}</span>
+            </div>
+            <div class="kpi-item">
+              <span class="kpi-number mono" data-testid="kpi-dual-channel-count">
+                {{ priceAlertSummary.dualChannelCount }}
+              </span>
+              <span class="kpi-label">Dual-Channel Indicators</span>
+              <span class="kpi-context">Simultaneous Email + SMS dispatch</span>
+            </div>
+            <div class="kpi-item">
+              <span class="kpi-number mono" data-testid="kpi-alert-coverage-pct">
+                {{ priceAlertSummary.activeCoveragePct }}%
+              </span>
+              <span class="kpi-label">Subscribed Coverage</span>
+              <span class="kpi-context">
+                {{ priceAlertSummary.anyChannelActiveCount }} active · {{ priceAlertSummary.fullyMutedCount }} muted
+              </span>
+            </div>
+          </div>
+
+          <!-- Delivery Endpoint Configuration Row -->
+          <form
+            novalidate
+            style="
+              padding: 14px 16px;
+              background: var(--bg-obsidian);
+              border: 1px solid var(--border-hairline);
+              border-radius: var(--radius-md);
+              margin-bottom: 18px;
+            "
+            data-testid="price-alert-delivery-form"
+            @submit.prevent="saveAlertDeliveryEndpoints"
+          >
+            <div
+              style="
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+                gap: 12px;
+                align-items: end;
+              "
+            >
+              <div class="form-field" style="margin-bottom: 0;">
+                <label for="alert-email-dest-input" class="form-label">
+                  Email Alert Destination
+                </label>
+                <input
+                  id="alert-email-dest-input"
+                  v-model="alertEmailDestination"
+                  type="email"
+                  class="form-input mono"
+                  placeholder="marcus.vance@apexquant.io"
+                  data-testid="alert-email-destination-input"
+                />
+              </div>
+
+              <div class="form-field" style="margin-bottom: 0;">
+                <label for="alert-sms-dest-input" class="form-label">
+                  SMS Mobile Alert Destination
+                </label>
+                <input
+                  id="alert-sms-dest-input"
+                  v-model="alertSmsDestination"
+                  type="tel"
+                  class="form-input mono"
+                  placeholder="+1 (212) 555-0194"
+                  data-testid="alert-sms-destination-input"
+                />
+              </div>
+
+              <div style="display: flex; align-items: center; gap: 10px;">
+                <button
+                  type="submit"
+                  class="btn-secondary"
+                  style="width: 100%; min-height: 40px;"
+                  data-testid="save-alert-endpoints-btn"
+                >
+                  Save Alert Endpoints
+                </button>
+              </div>
+            </div>
+
+            <div
+              v-if="alertDeliveryError"
+              class="form-error"
+              style="margin-top: 8px;"
+              role="alert"
+              data-testid="alert-delivery-error"
+            >
+              {{ alertDeliveryError }}
+            </div>
+          </form>
+
+          <!-- Live Test Dispatch Confirmation Banner -->
+          <div
+            v-if="lastDispatchedAlertBanner"
+            style="
+              padding: 12px 16px;
+              margin-bottom: 16px;
+              background: var(--bg-obsidian);
+              border: 1px solid var(--accent-emerald);
+              border-radius: var(--radius-md);
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+              gap: 12px;
+              flex-wrap: wrap;
+            "
+            role="status"
+            data-testid="test-price-alert-confirmation"
+          >
+            <div class="meta-line">
+              <span class="mono" style="color: var(--accent-emerald-bright); font-weight: 700;">
+                TEST SIGNAL DISPATCHED
+              </span>
+              <span class="meta-sep" aria-hidden="true">·</span>
+              <span style="color: var(--text-primary); font-weight: 600;">
+                {{ lastDispatchedAlertBanner.indicatorName }}
+              </span>
+              <span class="meta-sep" aria-hidden="true">·</span>
+              <span class="mono">{{ lastDispatchedAlertBanner.licenseKey }}</span>
+              <span class="meta-sep" aria-hidden="true">·</span>
+              <span>{{ lastDispatchedAlertBanner.triggerLabel }}</span>
+              <span class="meta-sep" aria-hidden="true">·</span>
+              <span class="mono" style="color: var(--accent-sky);">
+                {{ lastDispatchedAlertBanner.channelsLabel }}
+              </span>
+            </div>
+            <button
+              type="button"
+              class="btn-ghost"
+              style="padding: 4px 10px; min-height: 28px; font-size: 0.75rem;"
+              @click="lastDispatchedAlertBanner = null"
+            >
+              Dismiss
+            </button>
+          </div>
+
+          <!-- Per-Indicator Price Alert Toggle List (using store.customerLicenses) -->
+          <div
+            v-if="hydratedPriceAlerts.length > 0"
+            class="license-list"
+            data-testid="price-alert-indicator-list"
+          >
+            <div
+              v-for="(pref, idx) in hydratedPriceAlerts"
+              :key="`alert-row-${pref.licenseId}`"
+              class="license-panel"
+              :data-testid="`price-alert-row-${pref.licenseId}`"
+            >
+              <!-- Column 1: Subscribed Product Metadata (from LicenseRecord) -->
+              <div>
+                <div class="meta-line">
+                  <span
+                    :style="{
+                      color:
+                        pref.tvAccessStatus === 'Provisioned'
+                          ? 'var(--accent-emerald-bright)'
+                          : 'var(--accent-crimson)',
+                      fontWeight: 600,
+                    }"
+                  >
+                    {{ pref.tvAccessStatus }}
+                  </span>
+                  <span class="meta-sep" aria-hidden="true">·</span>
+                  <span>{{ pref.billingCycle }} Plan</span>
+                  <span class="meta-sep" aria-hidden="true">·</span>
+                  <span class="mono">Key: {{ pref.licenseKey }}</span>
+                </div>
+
+                <h3
+                  style="
+                    font-family: var(--font-display);
+                    font-size: 1.15rem;
+                    font-weight: 700;
+                    margin-top: 6px;
+                  "
+                >
+                  {{ pref.indicatorName }}
+                </h3>
+
+                <div class="meta-line" style="margin-top: 6px;">
+                  <span>Trigger: <strong style="color: var(--text-primary);">{{ pref.signalTriggerLabel }}</strong></span>
+                  <span class="meta-sep" aria-hidden="true">·</span>
+                  <span class="mono">{{ pref.monitoredTickersLabel }}</span>
+                </div>
+              </div>
+
+              <!-- Column 2: Email & SMS Price Alert Toggles -->
+              <div>
+                <div class="form-label" style="margin-bottom: 8px;">
+                  Notification Channels (Email &amp; SMS Price Alerts)
+                </div>
+
+                <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center;">
+                  <!-- Email Price Alert Switch -->
+                  <button
+                    type="button"
+                    role="switch"
+                    :aria-checked="pref.emailEnabled"
+                    :aria-label="`Toggle Email price alerts for ${pref.indicatorName}`"
+                    :data-testid="`toggle-email-alert-${pref.licenseId}`"
+                    :class="pref.emailEnabled ? 'btn-primary' : 'btn-secondary'"
+                    style="
+                      min-height: 38px;
+                      padding: 8px 14px;
+                      font-size: 0.78rem;
+                      display: inline-flex;
+                      align-items: center;
+                      gap: 8px;
+                    "
+                    @click="handleTogglePriceAlert(store.customerLicenses[idx], 'email')"
+                  >
+                    <span
+                      aria-hidden="true"
+                      :style="{
+                        width: '8px',
+                        height: '8px',
+                        borderRadius: '50%',
+                        background: pref.emailEnabled
+                          ? '#ffffff'
+                          : 'var(--text-muted)',
+                      }"
+                    ></span>
+                    <span class="mono" style="font-weight: 700;">
+                      Email Alerts: {{ pref.emailEnabled ? 'ON' : 'OFF' }}
+                    </span>
+                  </button>
+
+                  <!-- SMS Price Alert Switch -->
+                  <button
+                    type="button"
+                    role="switch"
+                    :aria-checked="pref.smsEnabled"
+                    :aria-label="`Toggle SMS price alerts for ${pref.indicatorName}`"
+                    :data-testid="`toggle-sms-alert-${pref.licenseId}`"
+                    :class="pref.smsEnabled ? 'btn-primary' : 'btn-secondary'"
+                    style="
+                      min-height: 38px;
+                      padding: 8px 14px;
+                      font-size: 0.78rem;
+                      display: inline-flex;
+                      align-items: center;
+                      gap: 8px;
+                    "
+                    @click="handleTogglePriceAlert(store.customerLicenses[idx], 'sms')"
+                  >
+                    <span
+                      aria-hidden="true"
+                      :style="{
+                        width: '8px',
+                        height: '8px',
+                        borderRadius: '50%',
+                        background: pref.smsEnabled
+                          ? '#ffffff'
+                          : 'var(--text-muted)',
+                      }"
+                    ></span>
+                    <span class="mono" style="font-weight: 700;">
+                      SMS Alerts: {{ pref.smsEnabled ? 'ON' : 'OFF' }}
+                    </span>
+                  </button>
+                </div>
+
+                <div class="form-hint mono" style="margin-top: 6px; font-size: 0.75rem;">
+                  <span v-if="pref.emailEnabled && pref.smsEnabled">
+                    Active Routing: Email ({{ alertEmailDestination }}) + SMS ({{ alertSmsDestination }})
+                  </span>
+                  <span v-else-if="pref.emailEnabled">
+                    Active Routing: Email only ({{ alertEmailDestination }})
+                  </span>
+                  <span v-else-if="pref.smsEnabled">
+                    Active Routing: SMS only ({{ alertSmsDestination }})
+                  </span>
+                  <span v-else style="color: var(--accent-amber);">
+                    Muted: Enable Email or SMS above to receive real-time price alerts
+                  </span>
+                </div>
+              </div>
+
+              <!-- Column 3: Test Dispatch & Sync Timestamp -->
+              <div style="display: flex; flex-direction: column; gap: 8px; align-items: flex-end; justify-content: center;">
+                <button
+                  type="button"
+                  class="btn-secondary"
+                  style="width: 100%; min-height: 36px; font-size: 0.75rem;"
+                  :data-testid="`test-price-alert-${pref.licenseId}`"
+                  :aria-label="`Send test price alert for ${pref.indicatorName}`"
+                  @click="dispatchTestPriceAlert(pref)"
+                >
+                  Send Test Price Alert
+                </button>
+                <div class="meta-line mono" style="font-size: 0.72rem;">
+                  <span>Handle: @{{ pref.tradingViewUsername }}</span>
+                  <span class="meta-sep" aria-hidden="true">·</span>
+                  <span>Updated {{ pref.updatedAt }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Empty State when customer has no subscribed indicators -->
+          <div
+            v-else
+            style="text-align: center; padding: 32px 16px;"
+            data-testid="price-alerts-empty-state"
+          >
+            <p style="color: var(--text-secondary);">
+              No subscribed indicators found for <span class="mono">{{ store.activeCustomerEmail }}</span>.
+              Purchase or bind an indicator license to configure Email and SMS price alerts.
+            </p>
+          </div>
+        </section>
 
         <!-- =================================================================
              TAB 2: DOCUMENTATION & INSTALLATION GUIDES
