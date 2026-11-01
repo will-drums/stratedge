@@ -4,7 +4,7 @@ import { useHead, useSeoMeta } from '@unhead/vue';
 import { usePlatformStore } from './stores/platformStore';
 import StorefrontView from './components/StorefrontView.vue';
 import CheckoutView from './components/CheckoutView.vue';
-import DashboardView from './components/DashboardView.vue';
+import ClientDashboard from './components/ClientDashboard.vue';
 import AdminFulfillmentView from './components/AdminFulfillmentView.vue';
 import AuthModal from './components/AuthModal.vue';
 import CartDrawer from './components/CartDrawer.vue';
@@ -18,7 +18,7 @@ const seoTitle = computed(() => {
     return 'Secure License Checkout & Instant Provisioning — StratEdge Algo';
   }
   if (activeView.value === 'dashboard') {
-    return 'Customer Dashboard, Memberships & Downloads — StratEdge Algo';
+    return 'Client Dashboard, Downloads & Support Keys — StratEdge Algo';
   }
   if (activeView.value === 'admin') {
     return 'Admin E-Commerce & Webhook Operations — StratEdge Algo';
@@ -31,7 +31,7 @@ const seoDescription = computed(() => {
     return 'Complete your StratEdge Algo indicator order with Zod-validated checkout and instant TradingView + Charles Schwab thinkorswim license provisioning.';
   }
   if (activeView.value === 'dashboard') {
-    return 'Manage your StratEdge Algo memberships, active indicator subscriptions, TradingView Invite-Only handles, and Charles Schwab thinkorswim .ts study downloads.';
+    return 'Manage your StratEdge Algo memberships, active indicator subscriptions, TradingView Invite-Only handles, support keys, and Charles Schwab thinkorswim .ts study downloads.';
   }
   return 'StratEdge Algo — Precision Engineered. Evidence Driven. Premium Trading Technology featuring StratEdge Algo Gamma, Flow, and Structure for TradingView and thinkorswim.';
 });
@@ -132,7 +132,7 @@ onMounted(() => {
             data-testid="nav-customer-dashboard"
             @click.prevent="setView('dashboard')"
           >
-            Customer Dashboard ({{ store.customerLicenses.length }})
+            Client Dashboard ({{ store.customerLicenses.length }})
           </a>
           <a
             href="#admin-console"
@@ -268,7 +268,7 @@ onMounted(() => {
         v-else-if="activeView === 'checkout'"
         @navigate="setView"
       />
-      <DashboardView
+      <ClientDashboard
         v-else-if="activeView === 'dashboard'"
         @navigate="setView"
       />
