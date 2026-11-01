@@ -40,8 +40,15 @@ import {
   QUICK_LOOK_TIMEFRAMES,
   resolveDefaultQuickLookTicker,
   buildIndicatorMultiTimeframeQuickLook,
+  TradeJournalEntryInputSchema,
+  hydrateTradeJournalEntries,
+  escapeCsvCell,
+  buildBacktestReportCsvFilename,
+  BACKTEST_REPORT_CSV_HEADERS,
+  buildBacktestAndTradeJournalCsvReport,
   type SupportTicketRecord,
   type PurchasedProductAlertLike,
+  type TradeJournalEntry,
 } from './fulfillment';
 
 test('TradingViewUsernameSchema validates legitimate handles and rejects invalid symbols', () => {
@@ -874,11 +881,103 @@ test('buildIndicatorMultiTimeframeQuickLook aggregates Win Rate, Profit Factor, 
   assert.ok(quickLook.avgProfitFactor >= 1.85);
 });
 
+test('buildBacktestAndTradeJournalCsvReport exports structured CSV with backtest summary, trade journal entries, and equity curve rows', () => {
+  assert.equal(escapeCsvCell('ES1!'), 'ES1!');
+  assert.equal(escapeCsvCell(2490.5), '2490.5');
+  assert.equal(
+    escapeCsvCell('Confirmed BOS, +2.4σ "AVWAP" Reclaim'),
+    '"Confirmed BOS, +2.4σ ""AVWAP"" Reclaim"'
+  );
 
+  const gammaLicense: PurchasedProductAlertLike = {
+    id: 'lic-gamma-csv',
+    licenseKey: 'SE-GAMM-8841-A9C2',
+    customerEmail: 'marcus.vance@apexquant.io',
+    customerName: 'Marcus Vance',
+    indicatorId: 'se-algo-gamma',
+    indicatorName: 'StratEdge Algo Gamma',
+    billingCycle: 'Annual',
+    tradingViewUsername: 'MarcusVance_ES',
+    tvAccessStatus: 'Provisioned',
+    expiresAt: '2027-10-31',
+  };
 
+  const backtest = simulatePurchasedIndicatorBacktest(gammaLicense, {
+    ticker: 'ES1!',
+    timeframe: '5m',
+    lookbackWindow: '90D',
+    startingCapital: 100000,
+  });
 
+  const filename = buildBacktestReportCsvFilename(backtest);
+  assert.equal(
+    filename,
+    'StratEdge_Backtest_Report_ES1_5m_90D_SE-GAMM-8841-A9C2.csv'
+  );
 
+  const validManualEntry = TradeJournalEntryInputSchema.safeParse({
+    ticker: 'es1!',
+    direction: 'LONG',
+    signalTrigger: '0DTE Put Wall Mean-Reversion + CVD Sweep',
+    entryPrice: 5842.25,
+    exitPrice: 5868.5,
+    rMultiple: 2.6,
+    pnlUsd: 3120,
+    executionNote: 'Entered on 5m bar close above Put Wall, scaled at Call Wall.',
+  });
+  assert.equal(validManualEntry.success, true);
 
+  const customJournalEntry: TradeJournalEntry = {
+    tradeId: 'JRN-ES1-999',
+    timestamp: '2026-11-01 14:30 UTC',
+    ticker: 'ES1!',
+    indicatorName: backtest.indicatorName,
+    licenseKey: backtest.licenseKey,
+    timeframe: backtest.timeframe,
+    direction: 'LONG',
+    signalTrigger: '0DTE Put Wall Mean-Reversion + CVD Sweep',
+    entryPrice: 5842.25,
+    exitPrice: 5868.5,
+    rMultiple: 2.6,
+    pnlUsd: 3120,
+    pnlPct: 3.12,
+    outcome: 'WIN',
+    executionNote: 'Entered on 5m bar close above Put Wall, scaled at Call Wall.',
+    source: 'MANUAL_JOURNAL',
+  };
 
+  const hydratedJournal = hydrateTradeJournalEntries(
+    backtest,
+    [customJournalEntry],
+    { [backtest.recentSignals[0].tradeId]: 'Custom audited desk note, 0 slippage' }
+  );
+  assert.equal(hydratedJournal.length, 7); // 1 manual + 6 backtest signals
+  assert.equal(hydratedJournal[0].tradeId, 'JRN-ES1-999');
+  assert.equal(
+    hydratedJournal[1].executionNote,
+    'Custom audited desk note, 0 slippage'
+  );
 
+  const report = buildBacktestAndTradeJournalCsvReport({
+    backtest,
+    customerName: 'Marcus Vance',
+    customerEmail: 'marcus.vance@apexquant.io',
+    supportKey: 'SUP-SE-MARCUS-94',
+    journalEntries: hydratedJournal,
+    exportedAt: '2026-11-01 15:00:00 UTC',
+  });
 
+  assert.equal(report.filename, filename);
+  assert.equal(report.summaryRowCount, 1);
+  assert.equal(report.journalEntryCount, 7);
+  assert.equal(report.equityPointCount, 16);
+  assert.equal(report.rowCount, 1 + 7 + 16);
+
+  const csvLines = report.csvContent.split('\n');
+  assert.equal(csvLines.length, 1 + report.rowCount); // header + 24 data rows
+  assert.equal(csvLines[0], BACKTEST_REPORT_CSV_HEADERS.join(','));
+  assert.ok(csvLines[1].startsWith('BACKTEST_SUMMARY,'));
+  assert.ok(csvLines[2].startsWith('TRADE_JOURNAL,JRN-ES1-999,'));
+  assert.ok(report.csvContent.includes('BACKTEST_EQUITY_CURVE,EQ-STEP-01,'));
+  assert.ok(report.csvContent.includes('Custom audited desk note, 0 slippage'));
+});

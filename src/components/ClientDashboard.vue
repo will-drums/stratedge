@@ -12,6 +12,9 @@ import {
   simulatePurchasedIndicatorBacktest,
   QUICK_LOOK_TIMEFRAMES,
   buildIndicatorMultiTimeframeQuickLook,
+  TradeJournalEntryInputSchema,
+  hydrateTradeJournalEntries,
+  buildBacktestAndTradeJournalCsvReport,
   type PriceAlertChannel,
   type IndicatorPriceAlertOverride,
   type IndicatorPriceAlertPreference,
@@ -20,6 +23,8 @@ import {
   type PurchasedIndicatorBacktestResult,
   type IndicatorMultiTimeframeQuickLook,
   type TimeframeQuickLookStat,
+  type TradeJournalEntry,
+  type BacktestCsvExportArtifact,
 } from '../utils/fulfillment';
 import SupportTicketing from './SupportTicketing.vue';
 
@@ -536,6 +541,146 @@ function launchFullBacktestFromTooltip(
   selectedEquityPointIndex.value = null;
   dismissQuickLookTooltip(lic.id);
   activePortalTab.value = 'backtest';
+}
+
+// Trade Journal Entries & Structured CSV Report Export State
+const customTradeJournalEntries = ref<TradeJournalEntry[]>([]);
+const tradeJournalNoteOverrides = ref<Record<string, string>>({});
+const showAddJournalEntryForm = ref(false);
+const journalDirectionDraft = ref<'LONG' | 'SHORT'>('LONG');
+const journalSignalTriggerDraft = ref('0DTE Put Wall Mean-Reversion + CVD Sweep');
+const journalEntryPriceDraft = ref<number>(5848.5);
+const journalExitPriceDraft = ref<number>(5874.25);
+const journalRMultipleDraft = ref<number>(2.4);
+const journalPnlUsdDraft = ref<number>(2880);
+const journalExecutionNoteDraft = ref(
+  'Confirmed 5m BOS reclaim above Put Wall; scaled 50% at +1.5R and trailed runner to Call Wall.'
+);
+const journalFormError = ref('');
+const lastExportedCsvReport = ref<BacktestCsvExportArtifact | null>(null);
+
+const activeTradeJournalEntries = computed<TradeJournalEntry[]>(() => {
+  const res = activeBacktestResult.value;
+  if (!res) return [];
+  const matchingCustom = customTradeJournalEntries.value.filter(
+    (entry) =>
+      entry.licenseKey === res.licenseKey || entry.ticker === res.ticker
+  );
+  return hydrateTradeJournalEntries(
+    res,
+    matchingCustom,
+    tradeJournalNoteOverrides.value
+  );
+});
+
+function addCustomTradeJournalEntry() {
+  journalFormError.value = '';
+  const res = activeBacktestResult.value;
+  if (!res) {
+    journalFormError.value =
+      'Select an active StratEdge Algo indicator license before logging a trade journal entry.';
+    return;
+  }
+
+  const parsed = TradeJournalEntryInputSchema.safeParse({
+    ticker: res.ticker,
+    direction: journalDirectionDraft.value,
+    signalTrigger: journalSignalTriggerDraft.value,
+    entryPrice: Number(journalEntryPriceDraft.value),
+    exitPrice: Number(journalExitPriceDraft.value),
+    rMultiple: Number(journalRMultipleDraft.value),
+    pnlUsd: Number(journalPnlUsdDraft.value),
+    executionNote: journalExecutionNoteDraft.value,
+  });
+
+  if (!parsed.success) {
+    journalFormError.value =
+      parsed.error.issues[0]?.message ||
+      'Invalid trade journal entry parameters.';
+    return;
+  }
+
+  const nowStamp =
+    new Date().toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
+  const seq = 980 + customTradeJournalEntries.value.length + 1;
+  const cleanTicker = parsed.data.ticker.replace(/[^A-Z0-9]/g, '').slice(0, 4);
+  const computedPnlPct = Number(
+    ((parsed.data.pnlUsd / Math.max(1000, res.startingCapital)) * 100).toFixed(2)
+  );
+
+  const newEntry: TradeJournalEntry = {
+    tradeId: `JRN-${cleanTicker}-${seq}`,
+    timestamp: nowStamp,
+    ticker: parsed.data.ticker,
+    indicatorName: res.indicatorName,
+    licenseKey: res.licenseKey,
+    timeframe: res.timeframe,
+    direction: parsed.data.direction,
+    signalTrigger: parsed.data.signalTrigger,
+    entryPrice: parsed.data.entryPrice,
+    exitPrice: parsed.data.exitPrice,
+    rMultiple: parsed.data.rMultiple,
+    pnlUsd: parsed.data.pnlUsd,
+    pnlPct: computedPnlPct,
+    outcome: parsed.data.pnlUsd >= 0 ? 'WIN' : 'LOSS',
+    executionNote: parsed.data.executionNote,
+    source: 'MANUAL_JOURNAL',
+  };
+
+  customTradeJournalEntries.value = [
+    newEntry,
+    ...customTradeJournalEntries.value,
+  ];
+  showAddJournalEntryForm.value = false;
+
+  store.showNotification(
+    'success',
+    `Trade Journal Entry Logged (${newEntry.tradeId})`,
+    `Added ${newEntry.direction} ${newEntry.ticker} (${newEntry.rMultiple >= 0 ? '+' : ''}${newEntry.rMultiple}R) to your trade journal.`
+  );
+}
+
+function downloadBacktestAndJournalCsvReport() {
+  const res = activeBacktestResult.value;
+  if (!res) {
+    store.showNotification(
+      'error',
+      'No Backtest Data Available',
+      'Purchase or bind a StratEdge Algo indicator license to export backtest and trade journal CSV reports.'
+    );
+    return;
+  }
+
+  const nowStamp =
+    new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+  const report = buildBacktestAndTradeJournalCsvReport({
+    backtest: res,
+    customerName: store.activeCustomerName,
+    customerEmail: store.activeCustomerEmail,
+    supportKey: memberSupportKey.value,
+    journalEntries: activeTradeJournalEntries.value,
+    exportedAt: nowStamp,
+  });
+
+  lastExportedCsvReport.value = report;
+
+  const blob = new Blob([report.csvContent], {
+    type: 'text/csv;charset=utf-8;',
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = report.filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+
+  store.showNotification(
+    'success',
+    `Exported CSV Report: ${report.filename}`,
+    `Downloaded ${report.rowCount} structured CSV rows (1 Backtest Summary, ${report.journalEntryCount} Trade Journal entries, ${report.equityPointCount} Equity Curve points).`
+  );
 }
 
 async function handleGateLogin() {
@@ -1461,13 +1606,26 @@ async function copyText(text: string, label: string) {
             </button>
           </div>
 
-          <button
-            type="button"
-            class="btn-primary"
-            @click="store.isCartDrawerOpen = true"
-          >
-            Shopping Cart ({{ store.cartTotals.itemCount }})
-          </button>
+          <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+            <button
+              v-if="activeBacktestResult"
+              type="button"
+              class="btn-secondary"
+              data-testid="download-report-top-btn"
+              :aria-label="`Download CSV Report for ${activeBacktestResult.ticker} (${activeBacktestResult.indicatorName})`"
+              @click="downloadBacktestAndJournalCsvReport()"
+            >
+              Download Report (.CSV)
+            </button>
+
+            <button
+              type="button"
+              class="btn-primary"
+              @click="store.isCartDrawerOpen = true"
+            >
+              Shopping Cart ({{ store.cartTotals.itemCount }})
+            </button>
+          </div>
         </div>
 
         <!-- =================================================================
@@ -2426,11 +2584,24 @@ async function copyText(text: string, label: string) {
               </p>
             </div>
 
-            <!-- Quick Ticker Presets -->
-            <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 6px;">
-              <span class="form-label" style="margin-bottom: 0;">
-                Instant Benchmark Tickers
-              </span>
+            <!-- Quick Ticker Presets & Primary Download Report Action -->
+            <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 8px;">
+              <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end;">
+                <span class="form-label" style="margin-bottom: 0;">
+                  Instant Benchmark Tickers
+                </span>
+                <button
+                  v-if="activeBacktestResult"
+                  type="button"
+                  class="btn-primary"
+                  style="padding: 7px 14px; min-height: 36px; font-size: 0.78rem;"
+                  data-testid="download-backtest-report-btn"
+                  :aria-label="`Download Report CSV for ${activeBacktestResult.ticker} backtest and trade journal`"
+                  @click="downloadBacktestAndJournalCsvReport()"
+                >
+                  Download Report
+                </button>
+              </div>
               <div style="display: flex; gap: 6px; flex-wrap: wrap;">
                 <button
                   v-for="preset in backtestPresetTickers"
@@ -2857,25 +3028,191 @@ async function copyText(text: string, label: string) {
               </div>
             </div>
 
-            <!-- Step 5: Historical Non-Repainting Signal Execution Log -->
-            <div>
+            <!-- Step 5: Historical Non-Repainting Signal Execution Log & Trade Journal -->
+            <div data-testid="backtest-trade-journal-section">
               <div
                 style="
                   display: flex;
                   justify-content: space-between;
                   align-items: center;
-                  margin-bottom: 10px;
+                  margin-bottom: 12px;
                   flex-wrap: wrap;
-                  gap: 8px;
+                  gap: 10px;
                 "
               >
-                <div class="form-label" style="margin-bottom: 0;">
-                  Recent Confirmed Signal Executions ({{ activeBacktestResult.ticker }} · {{ activeBacktestResult.indicatorName }})
+                <div>
+                  <div class="form-label" style="margin-bottom: 2px;">
+                    Confirmed Signal Executions &amp; Trade Journal ({{ activeTradeJournalEntries.length }} Entries · {{ activeBacktestResult.ticker }} · {{ activeBacktestResult.indicatorName }})
+                  </div>
+                  <div class="meta-line mono" style="font-size: 0.74rem; color: var(--text-secondary);">
+                    <span>Audited on barstate.isconfirmed</span>
+                    <span class="meta-sep" aria-hidden="true">·</span>
+                    <span>0 Lookahead Bias</span>
+                    <span class="meta-sep" aria-hidden="true">·</span>
+                    <span>CSV Export Ready (Summary + Journal + Equity Series)</span>
+                  </div>
                 </div>
-                <span class="mono" style="font-size: 0.75rem; color: var(--text-secondary);">
-                  Audited on barstate.isconfirmed · 0 Lookahead Bias
-                </span>
+
+                <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                  <button
+                    type="button"
+                    class="btn-secondary"
+                    style="padding: 6px 12px; min-height: 34px; font-size: 0.75rem;"
+                    data-testid="toggle-log-journal-entry-btn"
+                    @click="showAddJournalEntryForm = !showAddJournalEntryForm"
+                  >
+                    {{ showAddJournalEntryForm ? 'Cancel Journal Entry' : '+ Log Trade Journal Entry' }}
+                  </button>
+                  <button
+                    type="button"
+                    class="btn-primary"
+                    style="padding: 6px 14px; min-height: 34px; font-size: 0.75rem;"
+                    data-testid="download-journal-csv-btn"
+                    @click="downloadBacktestAndJournalCsvReport()"
+                  >
+                    Download Report (.CSV)
+                  </button>
+                </div>
               </div>
+
+              <!-- Optional Inline Trade Journal Entry Form -->
+              <form
+                v-if="showAddJournalEntryForm"
+                novalidate
+                style="
+                  padding: 14px 16px;
+                  background: var(--bg-obsidian);
+                  border: 1px solid var(--border-hairline);
+                  border-radius: var(--radius-md);
+                  margin-bottom: 14px;
+                "
+                data-testid="add-trade-journal-form"
+                @submit.prevent="addCustomTradeJournalEntry()"
+              >
+                <div
+                  style="
+                    display: grid;
+                    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+                    gap: 10px;
+                    align-items: end;
+                  "
+                >
+                  <div class="form-field" style="margin-bottom: 0;">
+                    <label for="journal-direction-select" class="form-label">Direction</label>
+                    <select
+                      id="journal-direction-select"
+                      v-model="journalDirectionDraft"
+                      class="form-select mono"
+                      data-testid="journal-direction-select"
+                    >
+                      <option value="LONG">LONG</option>
+                      <option value="SHORT">SHORT</option>
+                    </select>
+                  </div>
+
+                  <div class="form-field" style="margin-bottom: 0;">
+                    <label for="journal-trigger-input" class="form-label">Signal Setup / Trigger</label>
+                    <input
+                      id="journal-trigger-input"
+                      v-model="journalSignalTriggerDraft"
+                      type="text"
+                      class="form-input"
+                      data-testid="journal-trigger-input"
+                    />
+                  </div>
+
+                  <div class="form-field" style="margin-bottom: 0;">
+                    <label for="journal-entry-price" class="form-label">Entry Price</label>
+                    <input
+                      id="journal-entry-price"
+                      v-model.number="journalEntryPriceDraft"
+                      type="number"
+                      step="0.25"
+                      class="form-input mono"
+                      data-testid="journal-entry-price"
+                    />
+                  </div>
+
+                  <div class="form-field" style="margin-bottom: 0;">
+                    <label for="journal-exit-price" class="form-label">Exit Price</label>
+                    <input
+                      id="journal-exit-price"
+                      v-model.number="journalExitPriceDraft"
+                      type="number"
+                      step="0.25"
+                      class="form-input mono"
+                      data-testid="journal-exit-price"
+                    />
+                  </div>
+
+                  <div class="form-field" style="margin-bottom: 0;">
+                    <label for="journal-r-multiple" class="form-label">R-Multiple</label>
+                    <input
+                      id="journal-r-multiple"
+                      v-model.number="journalRMultipleDraft"
+                      type="number"
+                      step="0.1"
+                      class="form-input mono"
+                      data-testid="journal-r-multiple"
+                    />
+                  </div>
+
+                  <div class="form-field" style="margin-bottom: 0;">
+                    <label for="journal-pnl-usd" class="form-label">Realized PnL ($)</label>
+                    <input
+                      id="journal-pnl-usd"
+                      v-model.number="journalPnlUsdDraft"
+                      type="number"
+                      step="50"
+                      class="form-input mono"
+                      data-testid="journal-pnl-usd"
+                    />
+                  </div>
+                </div>
+
+                <div
+                  style="
+                    display: grid;
+                    grid-template-columns: 1fr auto;
+                    gap: 10px;
+                    align-items: end;
+                    margin-top: 10px;
+                  "
+                >
+                  <div class="form-field" style="margin-bottom: 0;">
+                    <label for="journal-note-input" class="form-label">
+                      Trader Execution Journal Note (Included in CSV Export)
+                    </label>
+                    <input
+                      id="journal-note-input"
+                      v-model="journalExecutionNoteDraft"
+                      type="text"
+                      class="form-input"
+                      placeholder="Document entry execution, liquidity sweep context, or stop placement..."
+                      data-testid="journal-note-input"
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    class="btn-primary"
+                    style="min-height: 40px;"
+                    data-testid="save-journal-entry-btn"
+                  >
+                    Save Journal Entry
+                  </button>
+                </div>
+
+                <div
+                  v-if="journalFormError"
+                  class="form-error"
+                  style="margin-top: 8px;"
+                  role="alert"
+                  data-testid="journal-form-error"
+                >
+                  {{ journalFormError }}
+                </div>
+              </form>
 
               <div class="table-scroll-wrapper">
                 <table class="data-table" data-testid="backtest-signal-log-table">
@@ -2888,11 +3225,12 @@ async function copyText(text: string, label: string) {
                       <th style="text-align: right;">Entry → Exit</th>
                       <th style="text-align: right;">R-Multiple</th>
                       <th style="text-align: right;">Realized PnL</th>
+                      <th>Trade Journal Execution Note</th>
                     </tr>
                   </thead>
                   <tbody>
                     <tr
-                      v-for="sig in activeBacktestResult.recentSignals"
+                      v-for="sig in activeTradeJournalEntries"
                       :key="sig.tradeId"
                       data-testid="backtest-signal-row"
                     >
@@ -2910,7 +3248,7 @@ async function copyText(text: string, label: string) {
                           fontWeight: 700,
                         }"
                       >
-                        {{ sig.direction }} {{ activeBacktestResult.ticker }}
+                        {{ sig.direction }} {{ sig.ticker }}
                       </td>
                       <td>{{ sig.signalTrigger }}</td>
                       <td class="mono" style="text-align: right;">
@@ -2940,9 +3278,77 @@ async function copyText(text: string, label: string) {
                       >
                         {{ sig.pnlUsd >= 0 ? `+$${sig.pnlUsd.toLocaleString()}` : `-$${Math.abs(sig.pnlUsd).toLocaleString()}` }}
                       </td>
+                      <td style="font-size: 0.78rem; color: var(--text-secondary); max-width: 300px;">
+                        {{ sig.executionNote }}
+                      </td>
                     </tr>
                   </tbody>
                 </table>
+              </div>
+
+              <!-- Structured CSV Report Export Inspector (Rendered when user clicks Download Report) -->
+              <div
+                v-if="lastExportedCsvReport"
+                style="
+                  margin-top: 16px;
+                  padding: 14px 16px;
+                  background: var(--bg-obsidian);
+                  border: 1px solid var(--accent-emerald);
+                  border-radius: var(--radius-md);
+                "
+                data-testid="csv-report-export-preview"
+              >
+                <div
+                  style="
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    gap: 12px;
+                    flex-wrap: wrap;
+                    margin-bottom: 10px;
+                  "
+                >
+                  <div>
+                    <div class="meta-line mono">
+                      <span style="color: var(--accent-emerald-bright); font-weight: 700;">
+                        STRUCTURED CSV REPORT EXPORTED
+                      </span>
+                      <span class="meta-sep" aria-hidden="true">·</span>
+                      <span data-testid="csv-export-filename">{{ lastExportedCsvReport.filename }}</span>
+                      <span class="meta-sep" aria-hidden="true">·</span>
+                      <span data-testid="csv-export-row-summary">
+                        {{ lastExportedCsvReport.rowCount }} Data Rows (1 Summary · {{ lastExportedCsvReport.journalEntryCount }} Journal · {{ lastExportedCsvReport.equityPointCount }} Equity Steps)
+                      </span>
+                    </div>
+                  </div>
+
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <button
+                      type="button"
+                      class="btn-secondary"
+                      style="padding: 5px 10px; min-height: 30px; font-size: 0.74rem;"
+                      data-testid="copy-exported-csv-btn"
+                      @click="copyText(lastExportedCsvReport.csvContent, 'Exported Backtest & Journal CSV')"
+                    >
+                      Copy CSV
+                    </button>
+                    <button
+                      type="button"
+                      class="btn-ghost"
+                      style="padding: 5px 10px; min-height: 30px; font-size: 0.74rem;"
+                      data-testid="close-csv-preview-btn"
+                      @click="lastExportedCsvReport = null"
+                    >
+                      Dismiss Preview
+                    </button>
+                  </div>
+                </div>
+
+                <pre
+                  class="code-preview mono"
+                  style="max-height: 190px; overflow: auto; font-size: 0.73rem; margin: 0;"
+                  data-testid="csv-export-raw-content"
+                >{{ lastExportedCsvReport.csvContent }}</pre>
               </div>
             </div>
           </div>

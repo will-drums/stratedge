@@ -2309,6 +2309,276 @@ export function buildIndicatorMultiTimeframeQuickLook(
   };
 }
 
+export interface TradeJournalEntry {
+  tradeId: string;
+  timestamp: string;
+  ticker: string;
+  indicatorName: string;
+  licenseKey: string;
+  timeframe: BacktestTimeframe;
+  direction: 'LONG' | 'SHORT';
+  signalTrigger: string;
+  entryPrice: number;
+  exitPrice: number;
+  rMultiple: number;
+  pnlUsd: number;
+  pnlPct: number;
+  outcome: 'WIN' | 'LOSS';
+  executionNote: string;
+  source: 'BACKTEST_SIGNAL' | 'MANUAL_JOURNAL';
+}
+
+export const TradeJournalEntryInputSchema = z.object({
+  ticker: z
+    .string()
+    .trim()
+    .min(1, 'Ticker symbol is required')
+    .max(14, 'Ticker symbol must be 14 characters or fewer')
+    .transform((v) => v.toUpperCase()),
+  direction: z.enum(['LONG', 'SHORT']).default('LONG'),
+  signalTrigger: z
+    .string()
+    .trim()
+    .min(3, 'Enter the StratEdge Algo signal trigger or setup (min 3 chars)')
+    .max(120, 'Signal trigger must be 120 characters or fewer'),
+  entryPrice: z.number().positive('Entry price must be greater than 0'),
+  exitPrice: z.number().positive('Exit price must be greater than 0'),
+  rMultiple: z.number().min(-10).max(50),
+  pnlUsd: z.number().min(-10000000).max(10000000),
+  executionNote: z
+    .string()
+    .trim()
+    .min(3, 'Add a brief trade journal execution note (min 3 chars)')
+    .max(280, 'Execution note must be 280 characters or fewer'),
+});
+
+export type TradeJournalEntryInput = z.infer<typeof TradeJournalEntryInputSchema>;
+
+const DEFAULT_EXECUTION_NOTES: readonly string[] = [
+  'Confirmed on barstate.isconfirmed; zero slippage fill at institutional liquidity wall.',
+  'Scaled 50% at +1.5R target; trailed remainder behind 5m structural BOS level.',
+  'Strict 1.5x Wilder ATR invalidation stop respected during intraday volatility sweep.',
+  'Entered after passive dark-pool block absorption (>2.2σ) aligned with dealer GEX pin.',
+  'Full target achieved at opposing Call/Put Gamma Wall before session close.',
+  'High-conviction confluence trigger; zero intrabar repainting verified on tape.',
+] as const;
+
+export function hydrateTradeJournalEntries(
+  backtest: PurchasedIndicatorBacktestResult,
+  customEntries: TradeJournalEntry[] = [],
+  noteOverrides: Record<string, string> = {}
+): TradeJournalEntry[] {
+  const mappedBacktestSignals: TradeJournalEntry[] = backtest.recentSignals.map(
+    (sig, idx) => {
+      const overrideNote = noteOverrides[sig.tradeId]?.trim();
+      const defaultNote =
+        DEFAULT_EXECUTION_NOTES[idx % DEFAULT_EXECUTION_NOTES.length];
+      return {
+        tradeId: sig.tradeId,
+        timestamp: sig.timestamp,
+        ticker: backtest.ticker,
+        indicatorName: backtest.indicatorName,
+        licenseKey: backtest.licenseKey,
+        timeframe: backtest.timeframe,
+        direction: sig.direction,
+        signalTrigger: sig.signalTrigger,
+        entryPrice: sig.entryPrice,
+        exitPrice: sig.exitPrice,
+        rMultiple: sig.rMultiple,
+        pnlUsd: sig.pnlUsd,
+        pnlPct: sig.pnlPct,
+        outcome: sig.outcome,
+        executionNote: overrideNote || defaultNote,
+        source: 'BACKTEST_SIGNAL',
+      };
+    }
+  );
+
+  return [...customEntries, ...mappedBacktestSignals];
+}
+
+export function escapeCsvCell(
+  value: string | number | boolean | null | undefined
+): string {
+  if (value === null || value === undefined) {
+    return '';
+  }
+  const str = String(value);
+  if (
+    str.includes(',') ||
+    str.includes('"') ||
+    str.includes('\n') ||
+    str.includes('\r')
+  ) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
+export function buildBacktestReportCsvFilename(
+  backtest: Pick<
+    PurchasedIndicatorBacktestResult,
+    'ticker' | 'timeframe' | 'lookbackWindow' | 'licenseKey'
+  >
+): string {
+  const cleanTicker = backtest.ticker.replace(/[^A-Z0-9_-]/gi, '').toUpperCase() || 'TICKER';
+  const cleanKey = backtest.licenseKey.replace(/[^A-Z0-9_-]/gi, '').toUpperCase() || 'LICENSE';
+  return `StratEdge_Backtest_Report_${cleanTicker}_${backtest.timeframe}_${backtest.lookbackWindow}_${cleanKey}.csv`;
+}
+
+export const BACKTEST_REPORT_CSV_HEADERS: readonly string[] = [
+  'Section',
+  'Record_ID',
+  'Timestamp_UTC',
+  'License_Key',
+  'Indicator_Name',
+  'Ticker',
+  'Timeframe',
+  'Lookback_Window',
+  'Direction',
+  'Signal_Trigger_Or_Regime',
+  'Entry_Price',
+  'Exit_Price',
+  'R_Multiple',
+  'Realized_PnL_USD',
+  'Return_Pct',
+  'Strategy_Equity_USD',
+  'Benchmark_Equity_USD',
+  'Drawdown_Pct',
+  'Outcome',
+  'Execution_Notes',
+] as const;
+
+export interface BacktestCsvExportArtifact {
+  filename: string;
+  csvContent: string;
+  rowCount: number;
+  summaryRowCount: number;
+  journalEntryCount: number;
+  equityPointCount: number;
+  exportedAt: string;
+}
+
+export function buildBacktestAndTradeJournalCsvReport(params: {
+  backtest: PurchasedIndicatorBacktestResult;
+  customerName?: string;
+  customerEmail?: string;
+  supportKey?: string;
+  journalEntries?: TradeJournalEntry[];
+  exportedAt?: string;
+}): BacktestCsvExportArtifact {
+  const { backtest } = params;
+  const exportedAt = params.exportedAt || '2026-11-01 16:00:00 UTC';
+  const customerName = params.customerName || 'Authorized StratEdge Trader';
+  const customerEmail = params.customerEmail || 'trader@stratedgealgo.com';
+  const supportKey = params.supportKey || 'SUP-SE-VERIFIED';
+
+  const resolvedJournal =
+    params.journalEntries && params.journalEntries.length > 0
+      ? params.journalEntries
+      : hydrateTradeJournalEntries(backtest);
+
+  const rows: Array<Array<string | number>> = [];
+
+  // 1. Header Row
+  rows.push([...BACKTEST_REPORT_CSV_HEADERS]);
+
+  // 2. Historical Performance Backtest Summary Row
+  const benchmarkEndingEquityUsd = Math.round(
+    backtest.startingCapital * (1 + backtest.benchmarkBuyHoldReturnPct / 100)
+  );
+  rows.push([
+    'BACKTEST_SUMMARY',
+    `SUM-${backtest.licenseKey}-${backtest.ticker}-${backtest.timeframe}`,
+    exportedAt,
+    backtest.licenseKey,
+    backtest.indicatorName,
+    backtest.ticker,
+    backtest.timeframe,
+    backtest.lookbackWindow,
+    `ALL_TRADES (${backtest.totalTrades} Total: ${backtest.winningTrades}W/${backtest.losingTrades}L)`,
+    backtest.strategyArchitectureLabel,
+    backtest.startingCapital,
+    backtest.endingEquityUsd,
+    backtest.avgRMultiple,
+    backtest.netProfitUsd,
+    backtest.netReturnPct,
+    backtest.endingEquityUsd,
+    benchmarkEndingEquityUsd,
+    backtest.maxDrawdownPct,
+    `WinRate ${backtest.winRatePct}% | PF ${backtest.profitFactor} | Sharpe ${backtest.sharpeRatio} | Alpha +${backtest.alphaOutperformancePct}%`,
+    `Trader: ${customerName} (${customerEmail}) | Handle: @${backtest.tradingViewUsername} | SupportKey: ${supportKey}`,
+  ]);
+
+  // 3. Trade Journal Entries Rows
+  for (const entry of resolvedJournal) {
+    rows.push([
+      'TRADE_JOURNAL',
+      entry.tradeId,
+      entry.timestamp,
+      entry.licenseKey,
+      entry.indicatorName,
+      entry.ticker,
+      entry.timeframe,
+      backtest.lookbackWindow,
+      entry.direction,
+      entry.signalTrigger,
+      entry.entryPrice,
+      entry.exitPrice,
+      entry.rMultiple,
+      entry.pnlUsd,
+      entry.pnlPct,
+      backtest.endingEquityUsd,
+      benchmarkEndingEquityUsd,
+      backtest.maxDrawdownPct,
+      entry.outcome,
+      `[${entry.source}] ${entry.executionNote}`,
+    ]);
+  }
+
+  // 4. Historical Backtest Equity Curve Time-Series Rows
+  for (const pt of backtest.equityCurve) {
+    rows.push([
+      'BACKTEST_EQUITY_CURVE',
+      `EQ-STEP-${String(pt.stepIndex + 1).padStart(2, '0')}`,
+      pt.dateLabel,
+      backtest.licenseKey,
+      backtest.indicatorName,
+      backtest.ticker,
+      backtest.timeframe,
+      backtest.lookbackWindow,
+      'EQUITY_SNAPSHOT',
+      pt.signalRegime,
+      backtest.startingCapital,
+      pt.strategyEquity,
+      backtest.avgRMultiple,
+      pt.strategyEquity - backtest.startingCapital,
+      pt.cumulativeReturnPct,
+      pt.strategyEquity,
+      pt.benchmarkEquity,
+      pt.drawdownPct,
+      `Bench ${pt.benchmarkReturnPct >= 0 ? '+' : ''}${pt.benchmarkReturnPct}%`,
+      `Historical Equity Step ${pt.stepIndex + 1} of ${backtest.equityCurve.length} (${pt.dateLabel})`,
+    ]);
+  }
+
+  const csvContent = rows
+    .map((row) => row.map((cell) => escapeCsvCell(cell)).join(','))
+    .join('\n');
+
+  const filename = buildBacktestReportCsvFilename(backtest);
+
+  return {
+    filename,
+    csvContent,
+    rowCount: rows.length - 1, // data rows excluding header
+    summaryRowCount: 1,
+    journalEntryCount: resolvedJournal.length,
+    equityPointCount: backtest.equityCurve.length,
+    exportedAt,
+  };
+}
+
 
 
 
