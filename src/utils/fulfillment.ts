@@ -2579,7 +2579,259 @@ export function buildBacktestAndTradeJournalCsvReport(params: {
   };
 }
 
+export const CATALOG_ALGORITHM_CATEGORIES = [
+  'All',
+  'Gamma',
+  'Flow',
+  'Structure',
+  'Full Suite',
+] as const;
 
+export type CatalogAlgorithmCategory =
+  (typeof CATALOG_ALGORITHM_CATEGORIES)[number];
 
+export const CATALOG_TRADING_STYLES = [
+  'All Styles',
+  '0DTE & Scalping',
+  'Intraday & Order-Flow',
+  'Swing & Multi-Day',
+  'Multi-Strategy Desk',
+] as const;
 
+export type CatalogTradingStyle = (typeof CATALOG_TRADING_STYLES)[number];
 
+export type CatalogSortOption =
+  | 'featured'
+  | 'win-rate-desc'
+  | 'profit-factor-desc'
+  | 'price-asc';
+
+export interface IndicatorCatalogFilterable {
+  id: string;
+  name: string;
+  tagline: string;
+  category: string;
+  description?: string;
+  markets?: string;
+  timeframes?: string;
+  signalsPerDay?: string;
+  winRatePct: number;
+  profitFactor: number;
+  sharpeRatio: number;
+  priceMonthly: number;
+  priceAnnual: number;
+  priceLifetime: number;
+}
+
+export function resolveIndicatorAlgorithmPillar(
+  ind: Pick<IndicatorCatalogFilterable, 'id' | 'name' | 'category'>
+): Exclude<CatalogAlgorithmCategory, 'All'> {
+  const combined = `${ind.id} ${ind.name} ${ind.category}`.toLowerCase();
+  if (combined.includes('bundle') || combined.includes('full suite') || combined.includes('trinity')) {
+    return 'Full Suite';
+  }
+  if (combined.includes('gamma')) {
+    return 'Gamma';
+  }
+  if (combined.includes('flow')) {
+    return 'Flow';
+  }
+  if (combined.includes('structure')) {
+    return 'Structure';
+  }
+  return 'Gamma';
+}
+
+export function resolveIndicatorTradingStyles(
+  ind: Pick<
+    IndicatorCatalogFilterable,
+    'id' | 'name' | 'category' | 'tagline' | 'timeframes'
+  >
+): Array<Exclude<CatalogTradingStyle, 'All Styles'>> {
+  const pillar = resolveIndicatorAlgorithmPillar(ind);
+  const combined = `${ind.id} ${ind.name} ${ind.category} ${ind.tagline} ${ind.timeframes || ''}`.toLowerCase();
+
+  if (pillar === 'Full Suite') {
+    return [
+      'Multi-Strategy Desk',
+      '0DTE & Scalping',
+      'Intraday & Order-Flow',
+      'Swing & Multi-Day',
+    ];
+  }
+  if (pillar === 'Gamma') {
+    return ['0DTE & Scalping', 'Intraday & Order-Flow'];
+  }
+  if (pillar === 'Flow') {
+    const styles: Array<Exclude<CatalogTradingStyle, 'All Styles'>> = [
+      'Intraday & Order-Flow',
+    ];
+    if (combined.includes('1m') || combined.includes('3m') || combined.includes('tick')) {
+      styles.push('0DTE & Scalping');
+    }
+    if (combined.includes('1h') || combined.includes('4h') || combined.includes('darkpool')) {
+      styles.push('Swing & Multi-Day');
+    }
+    return styles;
+  }
+  // Structure
+  return ['Swing & Multi-Day', 'Intraday & Order-Flow'];
+}
+
+export function resolvePrimaryTradingStyleLabel(
+  ind: Pick<
+    IndicatorCatalogFilterable,
+    'id' | 'name' | 'category' | 'tagline' | 'timeframes'
+  >
+): string {
+  const idLower = ind.id.toLowerCase();
+  if (idLower.includes('bundle') || idLower.includes('trinity')) {
+    return 'Multi-Strategy Prop & Institutional Desk';
+  }
+  if (idLower.includes('scanner')) {
+    return '0DTE Multi-Ticker Squeeze Scalping';
+  }
+  if (idLower.includes('gamma')) {
+    return '0DTE Options & Index Scalping';
+  }
+  if (idLower.includes('darkpool')) {
+    return 'Intraday & Swing Block Accumulation';
+  }
+  if (idLower.includes('flow')) {
+    return 'Intraday Order-Flow & Tape Day Trading';
+  }
+  if (idLower.includes('structure')) {
+    return 'Swing & Intraday Structural Trend';
+  }
+  const styles = resolveIndicatorTradingStyles(ind);
+  return styles[0] || 'Intraday & Order-Flow';
+}
+
+export function matchesIndicatorCatalogFilter(
+  ind: IndicatorCatalogFilterable,
+  criteria: {
+    searchQuery?: string;
+    category?: CatalogAlgorithmCategory | string;
+    tradingStyle?: CatalogTradingStyle | string;
+  }
+): boolean {
+  const category = (criteria.category || 'All').trim();
+  const tradingStyle = (criteria.tradingStyle || 'All Styles').trim();
+  const rawQuery = (criteria.searchQuery || '').trim().toLowerCase();
+
+  // 1. Category Filter
+  if (category && category !== 'All') {
+    const pillar = resolveIndicatorAlgorithmPillar(ind);
+    const catLower = category.toLowerCase();
+    const matchesPillar =
+      pillar.toLowerCase() === catLower ||
+      ind.category.toLowerCase().includes(catLower) ||
+      // Full Suite bundle includes Gamma, Flow, and Structure algorithms
+      (pillar === 'Full Suite' &&
+        (catLower === 'gamma' || catLower === 'flow' || catLower === 'structure') &&
+        false);
+    if (!matchesPillar) {
+      return false;
+    }
+  }
+
+  // 2. Trading Style Filter
+  if (tradingStyle && tradingStyle !== 'All Styles') {
+    const supportedStyles = resolveIndicatorTradingStyles(ind);
+    const styleLower = tradingStyle.toLowerCase();
+    const styleMatched =
+      supportedStyles.some((s) => s.toLowerCase() === styleLower) ||
+      ind.category.toLowerCase().includes(styleLower) ||
+      resolvePrimaryTradingStyleLabel(ind).toLowerCase().includes(styleLower);
+    if (!styleMatched) {
+      return false;
+    }
+  }
+
+  // 3. Multi-Token Search Query across Name, Pillar, Trading Style, Markets, Timeframes & Description
+  if (rawQuery.length > 0) {
+    const tokens = rawQuery.split(/\s+/).filter(Boolean);
+    const styleLabels = resolveIndicatorTradingStyles(ind).join(' ');
+    const primaryStyleLabel = resolvePrimaryTradingStyleLabel(ind);
+    const searchableCorpus = [
+      ind.id,
+      ind.name,
+      ind.tagline,
+      ind.category,
+      ind.description || '',
+      ind.markets || '',
+      ind.timeframes || '',
+      ind.signalsPerDay || '',
+      styleLabels,
+      primaryStyleLabel,
+    ]
+      .join(' ')
+      .toLowerCase();
+
+    for (const token of tokens) {
+      if (!searchableCorpus.includes(token)) {
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
+export function filterAndSortIndicatorCatalog<
+  T extends IndicatorCatalogFilterable,
+>(
+  indicators: readonly T[],
+  criteria: {
+    searchQuery?: string;
+    category?: CatalogAlgorithmCategory | string;
+    tradingStyle?: CatalogTradingStyle | string;
+    sortBy?: CatalogSortOption;
+  } = {}
+): T[] {
+  const filtered = indicators.filter((ind) =>
+    matchesIndicatorCatalogFilter(ind, criteria)
+  );
+
+  const sortBy: CatalogSortOption = criteria.sortBy || 'featured';
+  if (sortBy === 'win-rate-desc') {
+    return [...filtered].sort((a, b) => b.winRatePct - a.winRatePct);
+  }
+  if (sortBy === 'profit-factor-desc') {
+    return [...filtered].sort((a, b) => b.profitFactor - a.profitFactor);
+  }
+  if (sortBy === 'price-asc') {
+    return [...filtered].sort((a, b) => a.priceMonthly - b.priceMonthly);
+  }
+  return filtered;
+}
+
+export function computeCatalogCategoryCounts<
+  T extends IndicatorCatalogFilterable,
+>(
+  indicators: readonly T[],
+  criteria: {
+    searchQuery?: string;
+    tradingStyle?: CatalogTradingStyle | string;
+  } = {}
+): Record<CatalogAlgorithmCategory, number> {
+  const counts: Record<CatalogAlgorithmCategory, number> = {
+    All: 0,
+    Gamma: 0,
+    Flow: 0,
+    Structure: 0,
+    'Full Suite': 0,
+  };
+
+  for (const cat of CATALOG_ALGORITHM_CATEGORIES) {
+    counts[cat] = indicators.filter((ind) =>
+      matchesIndicatorCatalogFilter(ind, {
+        searchQuery: criteria.searchQuery,
+        tradingStyle: criteria.tradingStyle,
+        category: cat,
+      })
+    ).length;
+  }
+
+  return counts;
+}

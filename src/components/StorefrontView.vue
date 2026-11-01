@@ -15,6 +15,14 @@ import { usePlatformStore, type IndicatorItem } from '../stores/platformStore';
 import {
   CheckoutFormSchema,
   calculateOrderPricing,
+  CATALOG_ALGORITHM_CATEGORIES,
+  CATALOG_TRADING_STYLES,
+  resolvePrimaryTradingStyleLabel,
+  filterAndSortIndicatorCatalog,
+  computeCatalogCategoryCounts,
+  type CatalogAlgorithmCategory,
+  type CatalogTradingStyle,
+  type CatalogSortOption,
 } from '../utils/fulfillment';
 import TradingHeroVisual from './TradingHeroVisual.vue';
 import TestimonialsSection from './TestimonialsSection.vue';
@@ -142,22 +150,53 @@ onUnmounted(() => {
   gsapCtx?.revert();
 });
 
-// Catalog Category & Platform Filters
-const activeCategoryFilter = ref<string>('All');
+// Catalog Search, Algorithm Category & Trading Style Filters
+const catalogSearchQuery = ref<string>('');
+const activeCategoryFilter = ref<CatalogAlgorithmCategory>('All');
+const activeTradingStyleFilter = ref<CatalogTradingStyle>('All Styles');
+const catalogSortBy = ref<CatalogSortOption>('featured');
 const billingCadencePreview = ref<'Monthly' | 'Annual' | 'Lifetime'>('Annual');
 const inspectedIndicator = ref<IndicatorItem | null>(null);
 
-const filteredCatalog = computed(() => {
-  if (activeCategoryFilter.value === 'All') {
-    return store.indicators;
-  }
-  return store.indicators.filter((ind) =>
-    ind.category.toLowerCase().includes(activeCategoryFilter.value.toLowerCase())
-  );
-});
+const catalogCategoryCounts = computed(() =>
+  computeCatalogCategoryCounts(store.indicators, {
+    searchQuery: catalogSearchQuery.value,
+    tradingStyle: activeTradingStyleFilter.value,
+  })
+);
+
+const filteredCatalog = computed(() =>
+  filterAndSortIndicatorCatalog(store.indicators, {
+    searchQuery: catalogSearchQuery.value,
+    category: activeCategoryFilter.value,
+    tradingStyle: activeTradingStyleFilter.value,
+    sortBy: catalogSortBy.value,
+  })
+);
+
+const hasActiveCatalogFilters = computed(
+  () =>
+    catalogSearchQuery.value.trim().length > 0 ||
+    activeCategoryFilter.value !== 'All' ||
+    activeTradingStyleFilter.value !== 'All Styles' ||
+    catalogSortBy.value !== 'featured'
+);
+
+function resetCatalogFilters() {
+  catalogSearchQuery.value = '';
+  activeCategoryFilter.value = 'All';
+  activeTradingStyleFilter.value = 'All Styles';
+  catalogSortBy.value = 'featured';
+}
 
 watch(
-  () => [filteredCatalog.value.length, activeCategoryFilter.value],
+  () => [
+    filteredCatalog.value.length,
+    activeCategoryFilter.value,
+    activeTradingStyleFilter.value,
+    catalogSearchQuery.value,
+    catalogSortBy.value,
+  ],
   async () => {
     await nextTick();
     initScrollTriggeredCards();
@@ -584,7 +623,7 @@ function selectIndicatorForCheckout(
       </div>
     </section>
 
-    <!-- 3. INDICATOR CATALOG CARDS WITH LIVE PRICING CADENCE -->
+    <!-- 3. INDICATOR CATALOG CARDS WITH SEARCH, CATEGORY & TRADING STYLE FILTER BAR -->
     <section id="indicator-catalog" class="section-block">
       <div class="container">
         <div class="section-header">
@@ -597,20 +636,6 @@ function selectIndicatorForCheckout(
           </div>
 
           <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
-            <!-- Strategy Category Filter -->
-            <div class="segmented-group" role="group" aria-label="Filter indicators by pillar">
-              <button
-                v-for="cat in ['All', 'Gamma', 'Flow', 'Structure', 'Full Suite']"
-                :key="cat"
-                type="button"
-                class="segmented-btn"
-                :class="{ active: activeCategoryFilter === cat }"
-                @click="activeCategoryFilter = cat"
-              >
-                {{ cat }}
-              </button>
-            </div>
-
             <!-- Billing Cadence Selector -->
             <div class="segmented-group" role="group" aria-label="Select pricing cadence">
               <button
@@ -627,7 +652,162 @@ function selectIndicatorForCheckout(
           </div>
         </div>
 
-        <div class="catalog-grid">
+        <!-- Search, Algorithm Category & Trading Style Filter Bar -->
+        <div
+          style="
+            padding: 18px 20px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-hairline);
+            border-radius: var(--radius-md);
+            margin-bottom: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+          "
+          data-testid="indicator-catalog-filter-bar"
+          role="region"
+          aria-label="Indicator Catalog Search and Category Filter Bar"
+        >
+          <!-- Filter Bar Row 1: Search Input + Algorithm Pillar Filter + Sort Selector -->
+          <div
+            style="
+              display: flex;
+              flex-wrap: wrap;
+              gap: 14px;
+              align-items: flex-end;
+              justify-content: space-between;
+            "
+          >
+            <!-- Search Input -->
+            <div class="form-field" style="margin-bottom: 0; flex: 1 1 280px; min-width: 240px;">
+              <label for="catalog-search-input" class="form-label">
+                Search Algorithms by Name, Market, or Timeframe
+              </label>
+              <input
+                id="catalog-search-input"
+                v-model="catalogSearchQuery"
+                type="search"
+                class="search-input"
+                placeholder="Search e.g. Gamma, Flow, Structure, 0DTE, NVDA, Swing..."
+                data-testid="catalog-search-input"
+              />
+            </div>
+
+            <!-- Algorithm Pillar Category Filter -->
+            <div style="flex: 0 1 auto;">
+              <span class="form-label" style="display: block; margin-bottom: 6px;">
+                Algorithm Category Pillar
+              </span>
+              <div
+                class="segmented-group"
+                role="group"
+                aria-label="Filter indicators by algorithm pillar"
+                style="flex-wrap: wrap;"
+              >
+                <button
+                  v-for="cat in CATALOG_ALGORITHM_CATEGORIES"
+                  :key="cat"
+                  type="button"
+                  class="segmented-btn"
+                  :class="{ active: activeCategoryFilter === cat }"
+                  :data-testid="`catalog-category-btn-${cat.toLowerCase().replace(/\\s+/g, '-')}`"
+                  @click="activeCategoryFilter = cat"
+                >
+                  <span>{{ cat }}</span>
+                  <span
+                    class="mono"
+                    style="margin-left: 5px; font-size: 0.72rem; opacity: 0.85;"
+                  >
+                    ({{ catalogCategoryCounts[cat] }})
+                  </span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Sort Order Selector -->
+            <div class="form-field" style="margin-bottom: 0; flex: 0 1 240px; min-width: 210px;">
+              <label for="catalog-sort-select" class="form-label">
+                Sort Catalog Models
+              </label>
+              <select
+                id="catalog-sort-select"
+                v-model="catalogSortBy"
+                class="form-select mono"
+                data-testid="catalog-sort-select"
+              >
+                <option value="featured">Featured Institutional Order</option>
+                <option value="win-rate-desc">Highest Audited Win Rate (%)</option>
+                <option value="profit-factor-desc">Highest Profit Factor (x)</option>
+                <option value="price-asc">Lowest Monthly License ($)</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Filter Bar Row 2: Trading Style Filter + Result Summary & Reset -->
+          <div
+            style="
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+              gap: 14px;
+              flex-wrap: wrap;
+              padding-top: 14px;
+              border-top: 1px solid var(--border-hairline);
+            "
+          >
+            <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+              <span class="form-label" style="margin-bottom: 0;">
+                Trading Style:
+              </span>
+              <div
+                class="segmented-group"
+                role="group"
+                aria-label="Filter indicators by trading style"
+                style="flex-wrap: wrap;"
+              >
+                <button
+                  v-for="style in CATALOG_TRADING_STYLES"
+                  :key="style"
+                  type="button"
+                  class="segmented-btn"
+                  :class="{ active: activeTradingStyleFilter === style }"
+                  :data-testid="`catalog-style-btn-${style.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`"
+                  @click="activeTradingStyleFilter = style"
+                >
+                  {{ style }}
+                </button>
+              </div>
+            </div>
+
+            <div
+              class="meta-line mono"
+              style="font-size: 0.78rem;"
+              data-testid="catalog-filter-summary"
+            >
+              <span>
+                Showing
+                <strong style="color: var(--accent-emerald-bright);">
+                  {{ filteredCatalog.length }}
+                </strong>
+                of {{ store.indicators.length }} StratEdge Algo Models
+              </span>
+              <template v-if="hasActiveCatalogFilters">
+                <span class="meta-sep" aria-hidden="true">·</span>
+                <button
+                  type="button"
+                  class="btn-ghost"
+                  style="padding: 4px 10px; min-height: 28px; font-size: 0.75rem;"
+                  data-testid="reset-catalog-filters-btn"
+                  @click="resetCatalogFilters"
+                >
+                  Reset Filters
+                </button>
+              </template>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="filteredCatalog.length > 0" class="catalog-grid">
           <article
             v-for="ind in filteredCatalog"
             :key="ind.id"
@@ -647,6 +827,13 @@ function selectIndicatorForCheckout(
 
               <h3 class="card-title">{{ ind.name }}</h3>
               <p class="card-tagline" style="margin-top: 8px;">{{ ind.tagline }}</p>
+              <div class="meta-line mono" style="margin-top: 10px; font-size: 0.74rem;">
+                <span style="color: var(--accent-emerald-bright);">
+                  Style: {{ resolvePrimaryTradingStyleLabel(ind) }}
+                </span>
+                <span class="meta-sep" aria-hidden="true">·</span>
+                <span>TF: {{ ind.timeframes }}</span>
+              </div>
             </div>
 
             <!-- Styled Technical SVG Visual Preview (Zero-Broken-Image Policy) -->
@@ -759,6 +946,56 @@ function selectIndicatorForCheckout(
               </div>
             </div>
           </article>
+        </div>
+
+        <!-- Empty State when Search / Category / Trading Style returns 0 matches -->
+        <div
+          v-else
+          class="bento-panel"
+          style="text-align: center; padding: 40px 24px;"
+          data-testid="catalog-empty-state"
+        >
+          <div class="meta-line" style="justify-content: center;">
+            <span class="meta-accent">Zero Matching Algorithms</span>
+            <span class="meta-sep" aria-hidden="true">·</span>
+            <span class="mono">Category: {{ activeCategoryFilter }}</span>
+            <span class="meta-sep" aria-hidden="true">·</span>
+            <span class="mono">Style: {{ activeTradingStyleFilter }}</span>
+          </div>
+          <h3
+            style="
+              font-family: var(--font-display);
+              font-size: 1.25rem;
+              font-weight: 700;
+              margin-top: 8px;
+            "
+          >
+            No StratEdge Algo Models Match Your Active Filter Criteria
+          </h3>
+          <p
+            style="
+              color: var(--text-secondary);
+              font-size: 0.9rem;
+              max-width: 54ch;
+              margin: 8px auto 18px;
+            "
+          >
+            No algorithms matched
+            <strong v-if="catalogSearchQuery.trim()" class="mono">"{{ catalogSearchQuery.trim() }}"</strong>
+            under <strong>{{ activeCategoryFilter }}</strong> and
+            <strong>{{ activeTradingStyleFilter }}</strong>. Reset the filter bar to view all
+            Gamma, Flow, Structure, and Full Suite models.
+          </p>
+          <div>
+            <button
+              type="button"
+              class="btn-primary"
+              data-testid="catalog-empty-reset-btn"
+              @click="resetCatalogFilters"
+            >
+              Reset Catalog Filters ({{ store.indicators.length }} Models)
+            </button>
+          </div>
         </div>
       </div>
     </section>

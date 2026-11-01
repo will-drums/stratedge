@@ -46,9 +46,17 @@ import {
   buildBacktestReportCsvFilename,
   BACKTEST_REPORT_CSV_HEADERS,
   buildBacktestAndTradeJournalCsvReport,
+  CATALOG_ALGORITHM_CATEGORIES,
+  CATALOG_TRADING_STYLES,
+  resolveIndicatorAlgorithmPillar,
+  resolveIndicatorTradingStyles,
+  resolvePrimaryTradingStyleLabel,
+  filterAndSortIndicatorCatalog,
+  computeCatalogCategoryCounts,
   type SupportTicketRecord,
   type PurchasedProductAlertLike,
   type TradeJournalEntry,
+  type IndicatorCatalogFilterable,
 } from './fulfillment';
 
 test('TradingViewUsernameSchema validates legitimate handles and rejects invalid symbols', () => {
@@ -980,4 +988,144 @@ test('buildBacktestAndTradeJournalCsvReport exports structured CSV with backtest
   assert.ok(csvLines[2].startsWith('TRADE_JOURNAL,JRN-ES1-999,'));
   assert.ok(report.csvContent.includes('BACKTEST_EQUITY_CURVE,EQ-STEP-01,'));
   assert.ok(report.csvContent.includes('Custom audited desk note, 0 slippage'));
+});
+
+test('filterAndSortIndicatorCatalog and computeCatalogCategoryCounts filter algorithms by search query, category (Gamma, Flow, Structure, Full Suite), and trading style', () => {
+  const sampleCatalog: IndicatorCatalogFilterable[] = [
+    {
+      id: 'se-algo-gamma',
+      name: 'StratEdge Algo Gamma',
+      tagline: 'Precision dealer gamma exposure (GEX) topology for 0DTE index options.',
+      category: 'Gamma · Scalping',
+      markets: 'SPX, NDX, SPY, QQQ, ES, NQ 0DTE & Weekly Options',
+      timeframes: '1m, 2m, 5m, 15m',
+      winRatePct: 76.4,
+      profitFactor: 3.45,
+      sharpeRatio: 3.08,
+      priceMonthly: 199,
+      priceAnnual: 1490,
+      priceLifetime: 2890,
+    },
+    {
+      id: 'se-algo-flow',
+      name: 'StratEdge Algo Flow',
+      tagline: 'Institutional order-flow absorption matrices and cumulative volume delta (CVD).',
+      category: 'Flow · Day Trading',
+      markets: 'ES, NQ, CL, GC, S&P 500 Constituents',
+      timeframes: '1m, 3m, 5m, 15m, 30m',
+      winRatePct: 74.9,
+      profitFactor: 3.28,
+      sharpeRatio: 2.91,
+      priceMonthly: 189,
+      priceAnnual: 1490,
+      priceLifetime: 2790,
+    },
+    {
+      id: 'se-algo-structure',
+      name: 'StratEdge Algo Structure',
+      tagline: 'Algorithmic market structure mapping, liquidity sweeps, and multi-sigma VWAP.',
+      category: 'Structure · Swing & Day',
+      markets: 'US Equities, Index Futures, Sector ETFs',
+      timeframes: '5m, 15m, 1H, 4H, Daily, Weekly',
+      winRatePct: 72.8,
+      profitFactor: 3.62,
+      sharpeRatio: 2.86,
+      priceMonthly: 179,
+      priceAnnual: 1390,
+      priceLifetime: 2590,
+    },
+    {
+      id: 'se-algo-gamma-0dte-scanner',
+      name: 'StratEdge Algo Gamma — 0DTE Strike Scanner',
+      tagline: 'Real-time thinkorswim MarketWatch column & TradingView multi-ticker screener.',
+      category: 'Gamma · Scalping',
+      markets: 'SPX, SPY, QQQ, NDX, IWM, Mag-7 Weekly Options',
+      timeframes: '1m, 3m, 5m',
+      winRatePct: 75.1,
+      profitFactor: 3.19,
+      sharpeRatio: 2.94,
+      priceMonthly: 159,
+      priceAnnual: 1190,
+      priceLifetime: 2290,
+    },
+    {
+      id: 'se-algo-flow-darkpool',
+      name: 'StratEdge Algo Flow — DarkPool Block Oscillator',
+      tagline: 'Upstairs off-exchange block print detector and institutional accumulation.',
+      category: 'Flow · Day Trading',
+      markets: 'NVDA, AAPL, TSLA, META, MSFT, SPY, QQQ',
+      timeframes: '5m, 15m, 1H, 4H',
+      winRatePct: 73.6,
+      profitFactor: 3.12,
+      sharpeRatio: 2.79,
+      priceMonthly: 169,
+      priceAnnual: 1290,
+      priceLifetime: 2490,
+    },
+    {
+      id: 'se-institutional-bundle',
+      name: 'StratEdge Algo Trinity Bundle (Gamma + Flow + Structure)',
+      tagline: 'Complete institutional access to Gamma, Flow, and Structure under one license.',
+      category: 'Full Suite',
+      markets: 'All Futures, Options, Equities, FX & Commodities',
+      timeframes: 'All Tick, Intraday, Swing & Multi-Week Timeframes',
+      winRatePct: 77.2,
+      profitFactor: 3.74,
+      sharpeRatio: 3.24,
+      priceMonthly: 299,
+      priceAnnual: 1990,
+      priceLifetime: 3890,
+    },
+  ];
+
+  assert.equal(CATALOG_ALGORITHM_CATEGORIES.length, 5);
+  assert.equal(CATALOG_TRADING_STYLES.length, 5);
+
+  assert.equal(resolveIndicatorAlgorithmPillar(sampleCatalog[0]), 'Gamma');
+  assert.equal(resolveIndicatorAlgorithmPillar(sampleCatalog[1]), 'Flow');
+  assert.equal(resolveIndicatorAlgorithmPillar(sampleCatalog[2]), 'Structure');
+  assert.equal(resolveIndicatorAlgorithmPillar(sampleCatalog[5]), 'Full Suite');
+
+  assert.ok(resolveIndicatorTradingStyles(sampleCatalog[0]).includes('0DTE & Scalping'));
+  assert.ok(resolveIndicatorTradingStyles(sampleCatalog[2]).includes('Swing & Multi-Day'));
+  assert.equal(
+    resolvePrimaryTradingStyleLabel(sampleCatalog[0]),
+    '0DTE Options & Index Scalping'
+  );
+
+  // Category Counts
+  const baseCounts = computeCatalogCategoryCounts(sampleCatalog);
+  assert.equal(baseCounts.All, 6);
+  assert.equal(baseCounts.Gamma, 2);
+  assert.equal(baseCounts.Flow, 2);
+  assert.equal(baseCounts.Structure, 1);
+  assert.equal(baseCounts['Full Suite'], 1);
+
+  // Filter by Category = Gamma
+  const gammaOnly = filterAndSortIndicatorCatalog(sampleCatalog, {
+    category: 'Gamma',
+  });
+  assert.equal(gammaOnly.length, 2);
+  assert.ok(gammaOnly.every((i) => i.id.includes('gamma')));
+
+  // Filter by Trading Style = Swing & Multi-Day
+  const swingModels = filterAndSortIndicatorCatalog(sampleCatalog, {
+    tradingStyle: 'Swing & Multi-Day',
+  });
+  assert.equal(swingModels.length, 3); // Structure, DarkPool Flow (1H/4H), and Trinity Full Suite
+  assert.ok(swingModels.some((i) => i.id === 'se-algo-structure'));
+
+  // Search query with multi-token matching ("flow nvda")
+  const searchNvdaFlow = filterAndSortIndicatorCatalog(sampleCatalog, {
+    searchQuery: 'flow nvda',
+  });
+  assert.equal(searchNvdaFlow.length, 1);
+  assert.equal(searchNvdaFlow[0].id, 'se-algo-flow-darkpool');
+
+  // Sort by price ascending
+  const sortedByPrice = filterAndSortIndicatorCatalog(sampleCatalog, {
+    sortBy: 'price-asc',
+  });
+  assert.equal(sortedByPrice[0].id, 'se-algo-gamma-0dte-scanner'); // $159/mo
+  assert.equal(sortedByPrice[sortedByPrice.length - 1].id, 'se-institutional-bundle'); // $299/mo
 });
