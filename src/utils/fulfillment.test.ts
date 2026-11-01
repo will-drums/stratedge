@@ -21,6 +21,7 @@ import {
   filterSupportTickets,
   TRADER_FAQ_ITEMS,
   filterTraderFaqs,
+  computeLiquidityDepthMatrix,
   type SupportTicketRecord,
 } from './fulfillment';
 
@@ -496,6 +497,24 @@ test('filterTraderFaqs filters trader inquiries across Installation, Licensing, 
   const tosInstallSearch = filterTraderFaqs(TRADER_FAQ_ITEMS, 'Installation', 'thinkorswim');
   assert.ok(tosInstallSearch.length >= 2);
 });
+
+test('computeLiquidityDepthMatrix generates 64-node 3D liquidity grid and depth wall telemetry across Gamma, Flow, and Structure modes', () => {
+  const gammaSpx = computeLiquidityDepthMatrix('Gamma', 'SPX 0DTE', 8);
+  assert.equal(gammaSpx.nodes.length, 64);
+  assert.ok(gammaSpx.bidWallTotalMillions > 0);
+  assert.ok(gammaSpx.askWallTotalMillions > 0);
+  assert.equal(gammaSpx.equilibriumStrikeLabel, '5,865.00 (+2.14σ)');
+
+  const flowNq = computeLiquidityDepthMatrix('Flow', 'NQ1! Futures', 8);
+  assert.equal(flowNq.nodes.length, 64);
+  assert.ok(flowNq.askWallTotalMillions > gammaSpx.askWallTotalMillions);
+  assert.equal(flowNq.netRegimeLabel, '+19,420 Net Delta Sweep');
+
+  const structureEs = computeLiquidityDepthMatrix('Structure', 'ES1! Futures', 8);
+  assert.equal(structureEs.nodes.length, 64);
+  assert.equal(structureEs.netRegimeLabel, 'Bullish BOS Confirmed');
+});
+
 
 
 

@@ -1050,4 +1050,129 @@ export function filterTraderFaqs(
   });
 }
 
+export type HeroDepthMode = 'Gamma' | 'Flow' | 'Structure';
+export type HeroInstrumentFeed = 'SPX 0DTE' | 'ES1! Futures' | 'NQ1! Futures';
+
+export interface LiquidityGridNode {
+  row: number; // 0..7 (Strike / Price Level axis)
+  col: number; // 0..7 (Time / Depth Book Horizon axis)
+  x: number;
+  z: number;
+  baseHeight: number;
+  side: 'bid' | 'ask' | 'equilibrium';
+  intensity: number; // 0..1 normalized liquidity concentration
+}
+
+export interface LiquidityDepthMatrixResult {
+  nodes: LiquidityGridNode[];
+  bidWallTotalMillions: number;
+  askWallTotalMillions: number;
+  imbalancePct: number;
+  equilibriumStrikeLabel: string;
+  netRegimeLabel: string;
+}
+
+export function computeLiquidityDepthMatrix(
+  mode: HeroDepthMode = 'Gamma',
+  instrument: HeroInstrumentFeed = 'SPX 0DTE',
+  gridSize: number = 8
+): LiquidityDepthMatrixResult {
+  const safeSize = Math.max(4, Math.min(12, Math.round(gridSize)));
+  const instMultiplier =
+    instrument === 'SPX 0DTE' ? 1.0 : instrument === 'ES1! Futures' ? 1.16 : 1.28;
+
+  const nodes: LiquidityGridNode[] = [];
+  let bidSum = 0;
+  let askSum = 0;
+  const half = (safeSize - 1) / 2;
+
+  for (let r = 0; r < safeSize; r++) {
+    for (let c = 0; c < safeSize; c++) {
+      const normR = (r - half) / half; // -1 to +1 (Bid levels < 0, Ask levels > 0)
+      const normC = (c - half) / half; // -1 to +1 (Near book to deep book)
+
+      const x = Number(((r - half) * 0.78).toFixed(3));
+      const z = Number(((c - half) * 0.74).toFixed(3));
+
+      let rawHeight = 0.8;
+      let side: 'bid' | 'ask' | 'equilibrium' = 'equilibrium';
+
+      if (mode === 'Gamma') {
+        // Steep dealer GEX Call Wall & Put Wall with a crisp Zero-Gamma Flip trough in the center
+        const wallCurve = Math.pow(Math.abs(normR), 1.35) * 2.15;
+        const termDecay = (1 - Math.abs(normC) * 0.32) * 0.65;
+        rawHeight = (0.38 + wallCurve + termDecay) * instMultiplier;
+        side = normR < -0.18 ? 'bid' : normR > 0.18 ? 'ask' : 'equilibrium';
+      } else if (mode === 'Flow') {
+        // Order-book L2 depth ladder + aggressive sweep clusters along diagonal tape
+        const ladder = Math.abs(normR) * 1.45 + (c / safeSize) * 0.85;
+        const cluster = Math.sin(r * 0.95 + c * 0.75) * 0.48 + 0.55;
+        rawHeight = (0.42 + ladder * 0.72 + cluster) * instMultiplier;
+        side = normR < -0.1 ? 'bid' : normR > 0.1 ? 'ask' : 'equilibrium';
+      } else {
+        // Institutional VWAP & Liquidity Structure shelves at +/- 1.5 sigma and 2.5 sigma
+        const sigmaShelf = Math.cos(normR * Math.PI * 1.5) * 0.65 + 1.15;
+        const depthStep = (c / safeSize) * 0.7 + 0.35;
+        rawHeight = (sigmaShelf + depthStep * 0.6) * instMultiplier;
+        side = normR < -0.15 ? 'bid' : normR > 0.15 ? 'ask' : 'equilibrium';
+      }
+
+      const clampedHeight = Number(Math.min(3.35, Math.max(0.32, rawHeight)).toFixed(3));
+      const intensity = Number(
+        Math.min(1, Math.max(0.1, (clampedHeight - 0.3) / 3.05)).toFixed(3)
+      );
+
+      if (side === 'bid') {
+        bidSum += clampedHeight * 18.4;
+      } else if (side === 'ask') {
+        askSum += clampedHeight * 21.2;
+      } else {
+        bidSum += clampedHeight * 8.5;
+        askSum += clampedHeight * 9.1;
+      }
+
+      nodes.push({
+        row: r,
+        col: c,
+        x,
+        z,
+        baseHeight: clampedHeight,
+        side,
+        intensity,
+      });
+    }
+  }
+
+  const bidWallTotalMillions = Math.round(bidSum);
+  const askWallTotalMillions = Math.round(askSum);
+  const totalDepth = Math.max(1, bidWallTotalMillions + askWallTotalMillions);
+  const imbalancePct = Number(
+    (((askWallTotalMillions - bidWallTotalMillions) / totalDepth) * 100).toFixed(1)
+  );
+
+  const equilibriumStrikeLabel =
+    instrument === 'SPX 0DTE'
+      ? '5,865.00 (+2.14σ)'
+      : instrument === 'ES1! Futures'
+      ? '5,894.25 (+1.88σ)'
+      : '20,648.50 (+2.42σ)';
+
+  const netRegimeLabel =
+    mode === 'Gamma'
+      ? '+$2.48B Call Wall Pin'
+      : mode === 'Flow'
+      ? '+19,420 Net Delta Sweep'
+      : 'Bullish BOS Confirmed';
+
+  return {
+    nodes,
+    bidWallTotalMillions,
+    askWallTotalMillions,
+    imbalancePct,
+    equilibriumStrikeLabel,
+    netRegimeLabel,
+  };
+}
+
+
 

@@ -16,7 +16,7 @@ import {
   CheckoutFormSchema,
   calculateOrderPricing,
 } from '../utils/fulfillment';
-import Quant3DSurface from './Quant3DSurface.vue';
+import TradingHeroVisual from './TradingHeroVisual.vue';
 import TestimonialsSection from './TestimonialsSection.vue';
 import FAQSection from './FAQSection.vue';
 
@@ -399,8 +399,8 @@ function selectIndicatorForCheckout(
             </div>
           </div>
 
-          <!-- Right Column: Interactive Three.js + GSAP 3D Quantitative Surface -->
-          <Quant3DSurface
+          <!-- Right Column: Interactive Three.js 3D Market Depth & Liquidity Grid -->
+          <TradingHeroVisual
             v-model:active-model="active3DModel"
             v-model:active-instrument="active3DInstrument"
           />
