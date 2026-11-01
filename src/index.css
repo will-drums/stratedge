@@ -1490,3 +1490,286 @@ button {
   }
 }
 
+/* ==========================================================================
+   Hover-Interactive Multi-Timeframe Quick-Look Tooltip Module (ClientDashboard)
+   ========================================================================== */
+.license-panel {
+  position: relative;
+  overflow: visible;
+}
+
+.license-panel > div {
+  min-width: 0;
+}
+
+.license-panel:has(.quick-look-popover) {
+  z-index: 50;
+  border-color: rgba(16, 185, 129, 0.45);
+}
+
+.quick-look-tooltip-anchor {
+  position: relative;
+  display: inline-block;
+  margin-top: 12px;
+  max-width: 100%;
+}
+
+.quick-look-trigger-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px 12px;
+  min-height: 34px;
+  border-radius: var(--radius-inner);
+  background: rgba(8, 14, 26, 0.92);
+  border: 1px solid rgba(56, 189, 248, 0.28);
+  color: var(--text-primary);
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    border-color 150ms var(--ease-out),
+    background-color 150ms var(--ease-out),
+    box-shadow 150ms var(--ease-out);
+}
+
+.quick-look-trigger-btn:hover,
+.quick-look-trigger-btn.active {
+  border-color: var(--accent-emerald-bright);
+  background: rgba(16, 185, 129, 0.11);
+  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.16);
+}
+
+.quick-look-pulse-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent-emerald-bright);
+  box-shadow: 0 0 8px var(--accent-emerald-bright);
+  flex-shrink: 0;
+}
+
+.quick-look-trigger-label {
+  color: var(--text-primary);
+  letter-spacing: 0.01em;
+}
+
+.quick-look-trigger-metrics {
+  color: var(--accent-emerald-bright);
+  font-size: 0.72rem;
+  padding-left: 6px;
+  border-left: 1px solid var(--border-hairline);
+}
+
+.quick-look-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  width: min(620px, calc(100vw - 48px));
+  background: linear-gradient(180deg, #0b1324 0%, #060b15 100%);
+  border: 1px solid rgba(52, 211, 153, 0.42);
+  border-radius: var(--radius-outer);
+  box-shadow:
+    0 24px 54px rgba(0, 0, 0, 0.82),
+    0 0 0 1px rgba(16, 185, 129, 0.18);
+  padding: 16px;
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.quick-look-popover-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border-hairline);
+}
+
+.quick-look-popover-title {
+  font-family: var(--font-display);
+  font-size: 0.98rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-top: 2px;
+}
+
+.quick-look-close-btn {
+  padding: 4px 8px;
+  min-height: 26px;
+  font-size: 0.7rem;
+}
+
+.quick-look-tf-Subbar {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 6px;
+}
+
+.quick-look-tf-btn {
+  padding: 5px 6px;
+  min-height: 30px;
+  border-radius: 6px;
+  background: rgba(5, 9, 18, 0.9);
+  border: 1px solid var(--border-hairline);
+  color: var(--text-secondary);
+  font-size: 0.74rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  transition: all 140ms var(--ease-out);
+}
+
+.quick-look-tf-btn:hover,
+.quick-look-tf-btn.active {
+  border-color: var(--accent-emerald-bright);
+  background: rgba(16, 185, 129, 0.14);
+  color: var(--text-primary);
+}
+
+.quick-look-optimal-star {
+  color: var(--accent-emerald-bright);
+  font-size: 0.68rem;
+}
+
+.quick-look-kpi-strip {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  background: rgba(5, 8, 16, 0.85);
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-inner);
+  padding: 10px 12px;
+}
+
+.quick-look-kpi-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.quick-look-kpi-label {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.quick-look-kpi-val {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.quick-look-table-wrap {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-inner);
+  background: rgba(4, 7, 14, 0.92);
+}
+
+.quick-look-matrix-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.75rem;
+}
+
+.quick-look-matrix-table th {
+  padding: 6px 8px;
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  background: rgba(15, 23, 42, 0.9);
+  border-bottom: 1px solid var(--border-hairline);
+  white-space: nowrap;
+}
+
+.quick-look-matrix-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.08);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.quick-look-matrix-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.quick-look-matrix-table tbody tr:hover,
+.quick-look-matrix-table tbody tr.active-row {
+  background: rgba(16, 185, 129, 0.11);
+}
+
+.quick-look-best-tag {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 1px 4px;
+  font-size: 0.6rem;
+  font-weight: 700;
+  border-radius: 3px;
+  color: #04130d;
+  background: var(--accent-emerald-bright);
+  vertical-align: middle;
+}
+
+.quick-look-popover-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding-top: 6px;
+  border-top: 1px solid var(--border-hairline);
+}
+
+.quick-look-deeplink-btn {
+  padding: 4px 10px;
+  min-height: 28px;
+  font-size: 0.72rem;
+  color: var(--accent-emerald-bright);
+}
+
+@media (max-width: 767px) {
+  .quick-look-tooltip-anchor {
+    display: block;
+    width: 100%;
+  }
+
+  .quick-look-trigger-btn {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .quick-look-popover {
+    position: relative;
+    top: 8px;
+    left: 0;
+    width: 100%;
+    max-width: 100%;
+    padding: 12px;
+  }
+
+  .quick-look-kpi-strip {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .quick-look-tf-Subbar {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .quick-look-trigger-metrics {
+    border-left: none;
+    padding-left: 0;
+  }
+}
+
+

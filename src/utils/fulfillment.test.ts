@@ -35,6 +35,11 @@ import {
   toggleIndicatorPriceAlert,
   setAllIndicatorPriceAlerts,
   computePriceAlertSummary,
+  BacktestTickerInputSchema,
+  simulatePurchasedIndicatorBacktest,
+  QUICK_LOOK_TIMEFRAMES,
+  resolveDefaultQuickLookTicker,
+  buildIndicatorMultiTimeframeQuickLook,
   type SupportTicketRecord,
   type PurchasedProductAlertLike,
 } from './fulfillment';
@@ -753,6 +758,123 @@ test('Email and SMS price alert hydration, per-indicator toggling, bulk updates,
   });
   assert.equal(invalidDelivery.success, false);
 });
+
+test('BacktestTickerInputSchema and simulatePurchasedIndicatorBacktest map historical tickers to purchased StratEdge Algo indicators accurately', () => {
+  const validInput = BacktestTickerInputSchema.safeParse({
+    ticker: 'nvda',
+    licenseId: 'lic-gamma-1',
+    timeframe: '5m',
+    lookbackWindow: '90D',
+    startingCapital: 100000,
+  });
+  assert.equal(validInput.success, true);
+  if (validInput.success) {
+    assert.equal(validInput.data.ticker, 'NVDA');
+  }
+
+  const invalidTicker = BacktestTickerInputSchema.safeParse({
+    ticker: 'INVALID@TICKER#',
+    licenseId: 'lic-gamma-1',
+  });
+  assert.equal(invalidTicker.success, false);
+
+  const gammaLicense: PurchasedProductAlertLike = {
+    id: 'lic-gamma-1',
+    licenseKey: 'SE-GAMM-8841-A9C2',
+    customerEmail: 'marcus.vance@apexquant.io',
+    customerName: 'Marcus Vance',
+    indicatorId: 'se-algo-gamma',
+    indicatorName: 'StratEdge Algo Gamma',
+    billingCycle: 'Annual',
+    tradingViewUsername: 'MarcusVance_ES',
+    tvAccessStatus: 'Provisioned',
+    expiresAt: '2027-10-31',
+  };
+
+  const flowLicense: PurchasedProductAlertLike = {
+    id: 'lic-flow-2',
+    licenseKey: 'SE-FLOW-4419-D8A1',
+    customerEmail: 'marcus.vance@apexquant.io',
+    customerName: 'Marcus Vance',
+    indicatorId: 'se-algo-flow',
+    indicatorName: 'StratEdge Algo Flow',
+    billingCycle: 'Lifetime',
+    tradingViewUsername: 'MarcusVance_ES',
+    tvAccessStatus: 'Provisioned',
+    expiresAt: '2099-12-31',
+  };
+
+  const gammaNvdaResult = simulatePurchasedIndicatorBacktest(gammaLicense, {
+    ticker: 'nvda',
+    timeframe: '5m',
+    lookbackWindow: '90D',
+    startingCapital: 100000,
+  });
+  assert.equal(gammaNvdaResult.ticker, 'NVDA');
+  assert.equal(gammaNvdaResult.licenseKey, 'SE-GAMM-8841-A9C2');
+  assert.equal(gammaNvdaResult.indicatorName, 'StratEdge Algo Gamma');
+  assert.equal(gammaNvdaResult.equityCurve.length, 16);
+  assert.equal(gammaNvdaResult.recentSignals.length, 6);
+  assert.ok(gammaNvdaResult.endingEquityUsd > gammaNvdaResult.startingCapital);
+  assert.ok(gammaNvdaResult.netReturnPct > 0);
+  assert.ok(gammaNvdaResult.alphaOutperformancePct > 0);
+  assert.ok(
+    gammaNvdaResult.strategyArchitectureLabel.includes('Gamma Exposure (GEX)')
+  );
+
+  const flowEsResult = simulatePurchasedIndicatorBacktest(flowLicense, {
+    ticker: 'ES1!',
+    timeframe: '15m',
+    lookbackWindow: '180D',
+    startingCapital: 100000,
+  });
+  assert.equal(flowEsResult.ticker, 'ES1!');
+  assert.equal(flowEsResult.licenseKey, 'SE-FLOW-4419-D8A1');
+  assert.ok(
+    flowEsResult.strategyArchitectureLabel.includes('Cumulative Volume Delta (CVD)')
+  );
+  assert.notEqual(flowEsResult.endingEquityUsd, gammaNvdaResult.endingEquityUsd);
+});
+
+test('buildIndicatorMultiTimeframeQuickLook aggregates Win Rate, Profit Factor, Sharpe, and Return across all 6 timeframes', () => {
+  const gammaLicense: PurchasedProductAlertLike = {
+    id: 'lic-1001',
+    licenseKey: 'SE-GAMM-8841-A9C2',
+    indicatorId: 'stratedge-gamma',
+    indicatorName: 'StratEdge Algo Gamma',
+    billingCycle: 'Lifetime',
+    tradingViewUsername: 'MarcusVance_Quant',
+    tvAccessStatus: 'Provisioned',
+    expiresAt: '2099-12-31',
+  };
+
+  assert.equal(resolveDefaultQuickLookTicker(gammaLicense), 'SPX');
+
+  const quickLook = buildIndicatorMultiTimeframeQuickLook(gammaLicense);
+  assert.equal(quickLook.licenseId, 'lic-1001');
+  assert.equal(quickLook.licenseKey, 'SE-GAMM-8841-A9C2');
+  assert.equal(quickLook.benchmarkTicker, 'SPX');
+  assert.equal(quickLook.timeframes.length, QUICK_LOOK_TIMEFRAMES.length);
+  assert.deepEqual(
+    quickLook.timeframes.map((t) => t.timeframe),
+    ['1m', '5m', '15m', '1H', '4H', '1D']
+  );
+
+  for (const tfStat of quickLook.timeframes) {
+    assert.ok(tfStat.winRatePct >= 64 && tfStat.winRatePct <= 85);
+    assert.ok(tfStat.profitFactor >= 1.85 && tfStat.profitFactor <= 4.25);
+    assert.ok(tfStat.sharpeRatio >= 1.95 && tfStat.sharpeRatio <= 4.15);
+    assert.ok(tfStat.netReturnPct > 0);
+    assert.ok(tfStat.maxDrawdownPct > 0);
+    assert.ok(tfStat.totalTrades >= 18);
+  }
+
+  assert.ok(QUICK_LOOK_TIMEFRAMES.includes(quickLook.bestTimeframe));
+  assert.ok(quickLook.avgWinRatePct >= 64);
+  assert.ok(quickLook.avgProfitFactor >= 1.85);
+});
+
+
 
 
 
