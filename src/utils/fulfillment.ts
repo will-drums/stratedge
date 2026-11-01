@@ -89,6 +89,55 @@ export const CheckoutStep1Schema = z.object({
   }
 );
 
+export const PlatformPreferenceSchema = z.enum(['TradingView', 'thinkorswim', 'Dual']);
+export type PlatformPreference = z.infer<typeof PlatformPreferenceSchema>;
+
+export const ThinkorswimAccountIdSchema = z
+  .string()
+  .trim()
+  .min(4, 'thinkorswim Account / Workspace ID must be at least 4 characters (e.g. TOS-994182)')
+  .max(32, 'thinkorswim ID must be under 32 characters')
+  .regex(
+    /^[a-zA-Z0-9_-]+$/,
+    'thinkorswim ID may only contain letters, numbers, underscores, and hyphens'
+  );
+
+export const CheckoutIdentityPlatformStepSchema = z
+  .object({
+    customerName: z.string().trim().min(2, 'Full name or desk name is required (min 2 characters)'),
+    customerEmail: z.string().trim().email('Enter a valid institutional or personal email address'),
+    platformPreference: PlatformPreferenceSchema,
+    tradingViewUsername: z.string().trim().optional().default(''),
+    thinkorswimAccountId: z.string().trim().optional().default(''),
+  })
+  .superRefine((data, ctx) => {
+    if (data.platformPreference === 'TradingView' || data.platformPreference === 'Dual') {
+      const tvParsed = TradingViewUsernameSchema.safeParse(data.tradingViewUsername);
+      if (!tvParsed.success) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['tradingViewUsername'],
+          message:
+            tvParsed.error.issues[0]?.message ||
+            'Valid TradingView username is required for Pine Script v6 Invite-Only ACL provisioning',
+        });
+      }
+    }
+
+    if (data.platformPreference === 'thinkorswim' || data.platformPreference === 'Dual') {
+      const tosParsed = ThinkorswimAccountIdSchema.safeParse(data.thinkorswimAccountId);
+      if (!tosParsed.success) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['thinkorswimAccountId'],
+          message:
+            tosParsed.error.issues[0]?.message ||
+            'Valid Charles Schwab thinkorswim Account ID is required for .ts study watermarking',
+        });
+      }
+    }
+  });
+
 export const CheckoutStep2Schema = z.object({
   customerName: z.string().trim().min(2, 'Full name is required (min 2 characters)'),
   customerEmail: z.string().trim().email('Enter a valid institutional or personal email address'),

@@ -7,11 +7,12 @@ import {
 } from '../stores/platformStore';
 import {
   SecureCheckoutPaymentSchema,
+  CheckoutIdentityPlatformStepSchema,
   CheckoutStep1Schema,
-  CheckoutStep2Schema,
-  TradingViewUsernameSchema,
   calculateOrderPricing,
+  type PlatformPreference,
 } from '../utils/fulfillment';
+import CheckoutStepIdentityPlatform from './CheckoutStepIdentityPlatform.vue';
 
 const emit = defineEmits<{
   (e: 'navigate', view: 'storefront' | 'checkout' | 'dashboard' | 'admin'): void;
@@ -24,15 +25,14 @@ const checkoutMode = ref<'single' | 'cart'>(
   store.cartItems.length > 0 ? 'cart' : 'single'
 );
 
-// 3-Step Multi-Step Wizard State (1: Cart & Model, 2: Trader Identity & Handles, 3: Payment & Review)
+// 3-Step Multi-Step Wizard State (1: Identity & Platform Preference, 2: Cart & Model Selection, 3: Payment & Settlement)
 const currentStep = ref<1 | 2 | 3>(1);
 const wizardLayoutMode = ref<'wizard' | 'express'>('wizard');
 const step1Completed = ref(false);
 const step2Completed = ref(false);
 
-// Live TradingView Handle Verification State in Step 2
-const tvVerifyStatus = ref<'idle' | 'valid' | 'invalid'>('idle');
-const tvVerifyMessage = ref('');
+// Execution Platform Preference captured in Step 1 ('TradingView' | 'thinkorswim' | 'Dual')
+const platformPreference = ref<PlatformPreference>('TradingView');
 
 const couponInput = ref(store.cartCouponCode || 'PROP15');
 const paymentMethod = ref<'Card' | 'Wire' | 'USDC'>('Card');
@@ -47,6 +47,7 @@ const completedReceipt = ref<{
   orderId: string;
   totalPaid: number;
   paymentMethod: string;
+  platformPreference: PlatformPreference;
   licenses: LicenseRecord[];
   timestamp: string;
 } | null>(null);
@@ -54,6 +55,13 @@ const completedReceipt = ref<{
 function clearErrors() {
   bannerError.value = '';
   Object.keys(fieldErrors).forEach((k) => delete fieldErrors[k]);
+}
+
+function resolveEffectiveTradingViewHandle(rawHandle: string, tosId: string): string {
+  const trimmed = rawHandle.trim();
+  if (trimmed.length >= 3) return trimmed;
+  const sanitizedTos = tosId.replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 20);
+  return sanitizedTos.length >= 3 ? sanitizedTos : 'TOS_Desk_Trader';
 }
 
 // TanStack Form instance backed by SecureCheckoutPaymentSchema (Zod)
@@ -73,10 +81,43 @@ const paymentForm = useForm({
   onSubmit: async ({ value }) => {
     clearErrors();
 
+    // First validate Step 1 Identity & Platform Preference
+    const step1Check = CheckoutIdentityPlatformStepSchema.safeParse({
+      customerName: value.customerName,
+      customerEmail: value.customerEmail,
+      platformPreference: platformPreference.value,
+      tradingViewUsername: value.tradingViewUsername,
+      thinkorswimAccountId: value.thinkorswimAccountId,
+    });
+
+    if (!step1Check.success) {
+      for (const issue of step1Check.error.issues) {
+        const key = String(issue.path[0] || 'form');
+        if (!fieldErrors[key]) {
+          fieldErrors[key] = issue.message;
+        }
+      }
+      if (wizardLayoutMode.value === 'wizard') {
+        currentStep.value = 1;
+      }
+      bannerError.value =
+        step1Check.error.issues[0]?.message ||
+        'Please complete your identity and platform handle in Step 01.';
+      return;
+    }
+
+    const effectiveTvHandle =
+      platformPreference.value === 'thinkorswim'
+        ? resolveEffectiveTradingViewHandle(
+            value.tradingViewUsername,
+            value.thinkorswimAccountId
+          )
+        : value.tradingViewUsername;
+
     const payloadToValidate = {
       customerName: value.customerName,
       customerEmail: value.customerEmail,
-      tradingViewUsername: value.tradingViewUsername,
+      tradingViewUsername: effectiveTvHandle,
       thinkorswimAccountId: value.thinkorswimAccountId,
       indicatorId: store.selectedIndicatorId || 'se-institutional-bundle',
       billingCycle: store.selectedBillingCycle,
@@ -100,14 +141,14 @@ const paymentForm = useForm({
           fieldErrors[key] = issue.message;
         }
       }
-      // If error belongs to Step 2 fields while in wizard mode, jump to Step 2
       if (
         wizardLayoutMode.value === 'wizard' &&
         (fieldErrors.customerName ||
           fieldErrors.customerEmail ||
-          fieldErrors.tradingViewUsername)
+          fieldErrors.tradingViewUsername ||
+          fieldErrors.thinkorswimAccountId)
       ) {
-        currentStep.value = 2;
+        currentStep.value = 1;
       }
       bannerError.value =
         parsed.error.issues[0]?.message ||
@@ -141,6 +182,7 @@ const paymentForm = useForm({
         store.activeCustomerEmail = parsed.data.customerEmail.toLowerCase();
         store.activeCustomerName = parsed.data.customerName;
         store.activeTradingViewHandle = parsed.data.tradingViewUsername;
+        store.activeTosAccountId = parsed.data.thinkorswimAccountId || 'TOS-994182';
         store.isAuthenticated = true;
         store.clearCart();
         await store.fetchAllData();
@@ -149,6 +191,7 @@ const paymentForm = useForm({
           orderId: `ORD-${Date.now().toString().slice(-6)}`,
           totalPaid: data.totalPaid,
           paymentMethod: parsed.data.paymentMethod,
+          platformPreference: platformPreference.value,
           licenses: data.licenses,
           timestamp:
             new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC',
@@ -158,7 +201,7 @@ const paymentForm = useForm({
         store.showNotification(
           'success',
           `Transaction Approved · ${data.licenses.length} License(s) Provisioned`,
-          `Whitelisted @${parsed.data.tradingViewUsername} on TradingView & unlocked thinkorswim .ts downloads.`
+          `Provisioned ${platformPreference.value} access for @${parsed.data.tradingViewUsername}.`
         );
       } else {
         const res = await fetch('/api/checkout', {
@@ -184,6 +227,7 @@ const paymentForm = useForm({
         store.activeCustomerEmail = parsed.data.customerEmail.toLowerCase();
         store.activeCustomerName = parsed.data.customerName;
         store.activeTradingViewHandle = parsed.data.tradingViewUsername;
+        store.activeTosAccountId = parsed.data.thinkorswimAccountId || 'TOS-994182';
         store.isAuthenticated = true;
         store.lastProvisionedLicense = data.license;
         await store.fetchAllData();
@@ -192,6 +236,7 @@ const paymentForm = useForm({
           orderId: `ORD-${Date.now().toString().slice(-6)}`,
           totalPaid: data.pricing.finalPrice,
           paymentMethod: parsed.data.paymentMethod,
+          platformPreference: platformPreference.value,
           licenses: [data.license],
           timestamp: data.license.provisionedAt,
         };
@@ -200,7 +245,7 @@ const paymentForm = useForm({
         store.showNotification(
           'success',
           `License ${data.license.licenseKey} Provisioned Immediately`,
-          `Whitelisted @${data.license.tradingViewUsername} on TradingView & unlocked ${data.license.tosStudyFilename}.`
+          `Provisioned ${platformPreference.value} access & unlocked ${data.license.tosStudyFilename}.`
         );
       }
     } catch (err) {
@@ -214,32 +259,14 @@ const paymentForm = useForm({
   },
 });
 
+// Step 1 Validation: User Identity & Platform Preference (TradingView vs. thinkorswim)
 function validateAndAdvanceFromStep1() {
   clearErrors();
-  const parsed = CheckoutStep1Schema.safeParse({
-    checkoutMode: checkoutMode.value,
-    indicatorId: store.selectedIndicatorId || 'se-institutional-bundle',
-    billingCycle: store.selectedBillingCycle,
-    cartItemCount: store.cartItems.length,
-  });
-
-  if (!parsed.success) {
-    bannerError.value =
-      parsed.error.issues[0]?.message ||
-      'Please select an indicator or add items to your cart.';
-    return;
-  }
-
-  step1Completed.value = true;
-  currentStep.value = 2;
-}
-
-function validateAndAdvanceFromStep2() {
-  clearErrors();
   const v = paymentForm.state.values;
-  const parsed = CheckoutStep2Schema.safeParse({
+  const parsed = CheckoutIdentityPlatformStepSchema.safeParse({
     customerName: v.customerName,
     customerEmail: v.customerEmail,
+    platformPreference: platformPreference.value,
     tradingViewUsername: v.tradingViewUsername,
     thinkorswimAccountId: v.thinkorswimAccountId,
   });
@@ -253,7 +280,28 @@ function validateAndAdvanceFromStep2() {
     }
     bannerError.value =
       parsed.error.issues[0]?.message ||
-      'Please complete all required customer & TradingView handle fields.';
+      'Please complete your identity and platform preference fields.';
+    return;
+  }
+
+  step1Completed.value = true;
+  currentStep.value = 2;
+}
+
+// Step 2 Validation: Model, Tier & Shopping Cart Configuration
+function validateAndAdvanceFromStep2() {
+  clearErrors();
+  const parsed = CheckoutStep1Schema.safeParse({
+    checkoutMode: checkoutMode.value,
+    indicatorId: store.selectedIndicatorId || 'se-institutional-bundle',
+    billingCycle: store.selectedBillingCycle,
+    cartItemCount: store.cartItems.length,
+  });
+
+  if (!parsed.success) {
+    bannerError.value =
+      parsed.error.issues[0]?.message ||
+      'Please select an indicator or add items to your cart.';
     return;
   }
 
@@ -276,19 +324,6 @@ function goToStep(target: 1 | 2 | 3) {
     if (currentStep.value === 2) {
       validateAndAdvanceFromStep2();
     }
-  }
-}
-
-function verifyTradingViewHandleNow() {
-  const handle = paymentForm.state.values.tradingViewUsername;
-  const parsed = TradingViewUsernameSchema.safeParse(handle);
-  if (!parsed.success) {
-    tvVerifyStatus.value = 'invalid';
-    tvVerifyMessage.value =
-      parsed.error.issues[0]?.message || 'Invalid TradingView handle format';
-  } else {
-    tvVerifyStatus.value = 'valid';
-    tvVerifyMessage.value = `200 OK · @${parsed.data} verified ready for Pine Script v6 Invite-Only ACL provisioning.`;
   }
 }
 
@@ -369,9 +404,9 @@ async function downloadReceiptStudy(lic: LicenseRecord) {
             Multi-Step Cart, License Configuration &amp; Instant Checkout
           </h1>
           <p class="section-subtitle">
-            Configure your quantitative indicators or multi-item cart in Step 1, bind your
-            TradingView &amp; thinkorswim handles in Step 2, and settle payment in Step 3 for
-            instant ACL whitelisting.
+            Capture your trader identity and platform preference (TradingView vs. thinkorswim) in
+            Step 1, configure your quantitative model or multi-item cart in Step 2, and settle
+            payment in Step 3 for instant ACL provisioning.
           </p>
         </div>
 
@@ -438,7 +473,7 @@ async function downloadReceiptStudy(lic: LicenseRecord) {
             align-items: center;
           "
         >
-          <!-- Step 1 Pill/Tab -->
+          <!-- Step 1 Pill/Tab: User Identity & Platform Preference -->
           <button
             type="button"
             data-testid="step-indicator-1"
@@ -485,15 +520,15 @@ async function downloadReceiptStudy(lic: LicenseRecord) {
             </span>
             <div>
               <div class="mono" style="font-size: 0.72rem; color: var(--accent-emerald-bright);">
-                STEP 01 · CART &amp; TIER
+                STEP 01 · IDENTITY &amp; PLATFORM
               </div>
               <div style="font-weight: 700; font-size: 0.92rem; color: var(--text-primary);">
-                Model &amp; Cart Selection
+                Trader &amp; Platform Preference
               </div>
             </div>
           </button>
 
-          <!-- Step 2 Pill/Tab -->
+          <!-- Step 2 Pill/Tab: Model, Tier & Cart Selection -->
           <button
             type="button"
             data-testid="step-indicator-2"
@@ -540,10 +575,10 @@ async function downloadReceiptStudy(lic: LicenseRecord) {
             </span>
             <div>
               <div class="mono" style="font-size: 0.72rem; color: var(--accent-sky);">
-                STEP 02 · PLATFORM ACL
+                STEP 02 · CART &amp; TIER
               </div>
               <div style="font-weight: 700; font-size: 0.92rem; color: var(--text-primary);">
-                Trader &amp; TradingView Handle
+                Model &amp; Cart Selection
               </div>
             </div>
           </button>
@@ -630,6 +665,8 @@ async function downloadReceiptStudy(lic: LicenseRecord) {
               <span class="meta-accent">200 OK · Transaction Approved &amp; Provisioned</span>
               <span class="meta-sep" aria-hidden="true">·</span>
               <span class="mono">Order {{ completedReceipt.orderId }}</span>
+              <span class="meta-sep" aria-hidden="true">·</span>
+              <span class="mono">Platform: {{ completedReceipt.platformPreference }}</span>
               <span class="meta-sep" aria-hidden="true">·</span>
               <span class="mono">{{ completedReceipt.timestamp }}</span>
             </div>
@@ -728,11 +765,52 @@ async function downloadReceiptStudy(lic: LicenseRecord) {
           @submit.prevent.stop="paymentForm.handleSubmit()"
         >
           <!-- ===============================================================
-               STEP 1: CART & QUANTITATIVE MODEL SELECTION
+               STEP 1: USER IDENTITY & PLATFORM PREFERENCE (TradingView vs. thinkorswim)
                =============================================================== -->
           <div
             v-show="wizardLayoutMode === 'express' || currentStep === 1"
             data-testid="checkout-step-1"
+          >
+            <paymentForm.Field name="customerName">
+              <template #default="{ field: nameField }">
+                <paymentForm.Field name="customerEmail">
+                  <template #default="{ field: emailField }">
+                    <paymentForm.Field name="tradingViewUsername">
+                      <template #default="{ field: tvField }">
+                        <paymentForm.Field name="thinkorswimAccountId">
+                          <template #default="{ field: tosField }">
+                            <CheckoutStepIdentityPlatform
+                              :customer-name="nameField.state.value"
+                              :customer-email="emailField.state.value"
+                              :platform-preference="platformPreference"
+                              :trading-view-username="tvField.state.value"
+                              :thinkorswim-account-id="tosField.state.value"
+                              :field-errors="fieldErrors"
+                              :banner-error="currentStep === 1 ? bannerError : ''"
+                              :wizard-layout-mode="wizardLayoutMode"
+                              @update:customer-name="(v) => nameField.handleChange(v)"
+                              @update:customer-email="(v) => emailField.handleChange(v)"
+                              @update:platform-preference="(v) => (platformPreference = v)"
+                              @update:trading-view-username="(v) => tvField.handleChange(v)"
+                              @update:thinkorswim-account-id="(v) => tosField.handleChange(v)"
+                              @next="validateAndAdvanceFromStep1"
+                            />
+                          </template>
+                        </paymentForm.Field>
+                      </template>
+                    </paymentForm.Field>
+                  </template>
+                </paymentForm.Field>
+              </template>
+            </paymentForm.Field>
+          </div>
+
+          <!-- ===============================================================
+               STEP 2: MODEL, MEMBERSHIP TIER & SHOPPING CART SELECTION
+               =============================================================== -->
+          <div
+            v-show="wizardLayoutMode === 'express' || currentStep === 2"
+            data-testid="checkout-step-2"
             :style="{
               paddingBottom: wizardLayoutMode === 'express' ? '22px' : '6px',
               marginBottom: wizardLayoutMode === 'express' ? '22px' : '0',
@@ -741,7 +819,7 @@ async function downloadReceiptStudy(lic: LicenseRecord) {
             }"
           >
             <div class="meta-line" style="margin-bottom: 12px;">
-              <span class="meta-accent">Step 01 of 03</span>
+              <span class="meta-accent">Step 02 of 03</span>
               <span class="meta-sep" aria-hidden="true">·</span>
               <span>Configure Indicator Model, Membership Tier &amp; Shopping Cart</span>
             </div>
@@ -832,7 +910,7 @@ async function downloadReceiptStudy(lic: LicenseRecord) {
                     type="button"
                     class="btn-secondary"
                     style="padding: 6px 12px; min-height: 32px; font-size: 0.78rem;"
-                    data-testid="step1-add-to-cart-btn"
+                    data-testid="step2-add-to-cart-btn"
                     @click="
                       store.addToCart(
                         store.selectedIndicator.id,
@@ -848,8 +926,8 @@ async function downloadReceiptStudy(lic: LicenseRecord) {
               </div>
             </div>
 
-            <!-- Multi-Item Shopping Cart Mode inside Step 1 -->
-            <div v-else data-testid="step1-cart-manager">
+            <!-- Multi-Item Shopping Cart Mode inside Step 2 -->
+            <div v-else data-testid="step2-cart-manager">
               <div
                 v-if="store.detailedCartItems.length > 0"
                 style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px;"
@@ -868,7 +946,7 @@ async function downloadReceiptStudy(lic: LicenseRecord) {
                     gap: 12px;
                     flex-wrap: wrap;
                   "
-                  data-testid="step1-cart-item"
+                  data-testid="step2-cart-item"
                 >
                   <div>
                     <div class="meta-line" style="font-size: 0.74rem;">
@@ -915,7 +993,7 @@ async function downloadReceiptStudy(lic: LicenseRecord) {
                 </div>
               </div>
 
-              <!-- Empty Cart Fallback inside Step 1 -->
+              <!-- Empty Cart Fallback inside Step 2 -->
               <div
                 v-else
                 style="
@@ -965,177 +1043,6 @@ async function downloadReceiptStudy(lic: LicenseRecord) {
             </div>
 
             <div
-              v-if="bannerError && currentStep === 1"
-              class="form-error"
-              style="margin-bottom: 12px;"
-              role="alert"
-            >
-              {{ bannerError }}
-            </div>
-
-            <!-- Wizard Step 1 Next CTA -->
-            <div
-              v-if="wizardLayoutMode === 'wizard'"
-              style="display: flex; justify-content: flex-end; margin-top: 12px;"
-            >
-              <button
-                type="button"
-                class="btn-primary"
-                data-testid="checkout-next-step-1-btn"
-                @click="validateAndAdvanceFromStep1"
-              >
-                Continue to Step 02: Trader Identity &amp; Platform Handles →
-              </button>
-            </div>
-          </div>
-
-          <!-- ===============================================================
-               STEP 2: TRADER IDENTITY & AUTOMATED PLATFORM TARGETS
-               =============================================================== -->
-          <div
-            v-show="wizardLayoutMode === 'express' || currentStep === 2"
-            data-testid="checkout-step-2"
-            :style="{
-              paddingBottom: wizardLayoutMode === 'express' ? '22px' : '6px',
-              marginBottom: wizardLayoutMode === 'express' ? '22px' : '0',
-              borderBottom:
-                wizardLayoutMode === 'express' ? '1px solid var(--border-hairline)' : 'none',
-            }"
-          >
-            <div class="meta-line" style="margin-bottom: 12px;">
-              <span class="meta-accent">Step 02 of 03</span>
-              <span class="meta-sep" aria-hidden="true">·</span>
-              <span>Customer Identity &amp; Platform Provisioning Handles</span>
-            </div>
-
-            <div class="form-row-2">
-              <paymentForm.Field name="customerName">
-                <template #default="{ field }">
-                  <div class="form-field">
-                    <label :for="`chk-${field.name}`" class="form-label">
-                      Full Name / Desk Name *
-                    </label>
-                    <input
-                      :id="`chk-${field.name}`"
-                      :value="field.state.value"
-                      type="text"
-                      class="form-input"
-                      data-testid="checkout-customer-name-input"
-                      placeholder="Marcus Vance"
-                      @input="(e) => field.handleChange((e.target as HTMLInputElement).value)"
-                    />
-                    <span v-if="fieldErrors.customerName" class="form-error" role="alert">
-                      {{ fieldErrors.customerName }}
-                    </span>
-                  </div>
-                </template>
-              </paymentForm.Field>
-
-              <paymentForm.Field name="customerEmail">
-                <template #default="{ field }">
-                  <div class="form-field">
-                    <label :for="`chk-${field.name}`" class="form-label">
-                      Customer Email (Vault &amp; Receipt) *
-                    </label>
-                    <input
-                      :id="`chk-${field.name}`"
-                      :value="field.state.value"
-                      type="email"
-                      class="form-input"
-                      data-testid="checkout-customer-email-input"
-                      placeholder="marcus.vance@apexquant.io"
-                      @input="(e) => field.handleChange((e.target as HTMLInputElement).value)"
-                    />
-                    <span v-if="fieldErrors.customerEmail" class="form-error" role="alert">
-                      {{ fieldErrors.customerEmail }}
-                    </span>
-                  </div>
-                </template>
-              </paymentForm.Field>
-            </div>
-
-            <div class="form-row-2">
-              <paymentForm.Field name="tradingViewUsername">
-                <template #default="{ field }">
-                  <div class="form-field">
-                    <label :for="`chk-${field.name}`" class="form-label">
-                      TradingView Username (Invite-Only ACL) *
-                    </label>
-                    <div style="display: flex; gap: 8px;">
-                      <input
-                        :id="`chk-${field.name}`"
-                        :value="field.state.value"
-                        type="text"
-                        class="form-input mono"
-                        data-testid="checkout-tv-username-input"
-                        placeholder="MarcusVance_ES"
-                        @input="
-                          (e) => {
-                            field.handleChange((e.target as HTMLInputElement).value);
-                            tvVerifyStatus = 'idle';
-                          }
-                        "
-                      />
-                      <button
-                        type="button"
-                        class="btn-secondary"
-                        style="white-space: nowrap; padding: 0 12px;"
-                        data-testid="verify-tv-handle-btn"
-                        @click="verifyTradingViewHandleNow"
-                      >
-                        Verify ACL
-                      </button>
-                    </div>
-                    <span class="form-hint">
-                      Exact handle whitelisted on Pine Script v6 server
-                    </span>
-                    <span
-                      v-if="tvVerifyStatus !== 'idle'"
-                      class="mono"
-                      :style="{
-                        display: 'block',
-                        marginTop: '4px',
-                        fontSize: '0.75rem',
-                        color:
-                          tvVerifyStatus === 'valid'
-                            ? 'var(--accent-emerald-bright)'
-                            : 'var(--accent-crimson)',
-                      }"
-                      data-testid="tv-verify-feedback"
-                    >
-                      {{ tvVerifyMessage }}
-                    </span>
-                    <span v-if="fieldErrors.tradingViewUsername" class="form-error" role="alert">
-                      {{ fieldErrors.tradingViewUsername }}
-                    </span>
-                  </div>
-                </template>
-              </paymentForm.Field>
-
-              <paymentForm.Field name="thinkorswimAccountId">
-                <template #default="{ field }">
-                  <div class="form-field">
-                    <label :for="`chk-${field.name}`" class="form-label">
-                      Charles Schwab thinkorswim ID
-                    </label>
-                    <input
-                      :id="`chk-${field.name}`"
-                      :value="field.state.value"
-                      type="text"
-                      class="form-input mono"
-                      data-testid="checkout-tos-id-input"
-                      placeholder="TOS-994182"
-                      @input="(e) => field.handleChange((e.target as HTMLInputElement).value)"
-                    />
-                    <span class="form-hint">
-                      Embedded in your watermarked .ts study download
-                    </span>
-                  </div>
-                </template>
-              </paymentForm.Field>
-            </div>
-
-            <div
               v-if="bannerError && currentStep === 2"
               class="form-error"
               style="margin-bottom: 12px;"
@@ -1162,7 +1069,7 @@ async function downloadReceiptStudy(lic: LicenseRecord) {
                 data-testid="checkout-back-step-2-btn"
                 @click="currentStep = 1"
               >
-                ← Back to Step 01 (Cart &amp; Model)
+                ← Back to Step 01 (Identity &amp; Platform)
               </button>
               <button
                 type="button"
@@ -1207,10 +1114,18 @@ async function downloadReceiptStudy(lic: LicenseRecord) {
               data-testid="step3-verified-summary"
             >
               <div>
-                <span style="color: var(--text-muted);">Provisioning Target:</span>
+                <span style="color: var(--text-muted);">Platform Preference:</span>
                 <strong class="mono" style="margin-left: 6px; color: var(--accent-emerald-bright);">
-                  @{{ paymentForm.state.values.tradingViewUsername }}
+                  {{ platformPreference }}
                 </strong>
+                <span style="margin: 0 8px; color: var(--text-muted);">·</span>
+                <span class="mono" style="color: var(--text-primary);">
+                  {{
+                    platformPreference === 'thinkorswim'
+                      ? paymentForm.state.values.thinkorswimAccountId
+                      : `@${paymentForm.state.values.tradingViewUsername}`
+                  }}
+                </span>
                 <span style="margin: 0 8px; color: var(--text-muted);">·</span>
                 <span class="mono" style="color: var(--text-secondary);">
                   {{ paymentForm.state.values.customerEmail }}
@@ -1223,7 +1138,7 @@ async function downloadReceiptStudy(lic: LicenseRecord) {
                   style="padding: 3px 8px; min-height: 24px; font-size: 0.72rem;"
                   @click="currentStep = 1"
                 >
-                  Edit Cart/Model
+                  Edit Identity &amp; Platform
                 </button>
                 <button
                   type="button"
@@ -1231,7 +1146,7 @@ async function downloadReceiptStudy(lic: LicenseRecord) {
                   style="padding: 3px 8px; min-height: 24px; font-size: 0.72rem;"
                   @click="currentStep = 2"
                 >
-                  Edit Handles
+                  Edit Cart/Model
                 </button>
               </div>
             </div>

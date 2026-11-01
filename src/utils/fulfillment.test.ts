@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   CheckoutFormSchema,
   SecureCheckoutPaymentSchema,
+  CheckoutIdentityPlatformStepSchema,
   CheckoutStep1Schema,
   CheckoutStep2Schema,
   CheckoutStep3Schema,
@@ -203,4 +204,40 @@ test('3-step checkout schemas validate each step independently', () => {
   assert.equal(validStep3.success, true);
 });
 
+test('CheckoutIdentityPlatformStepSchema validates user identity and platform preference (TradingView vs. thinkorswim)', () => {
+  const validTradingViewPref = CheckoutIdentityPlatformStepSchema.safeParse({
+    customerName: 'Marcus Vance',
+    customerEmail: 'marcus.vance@apexquant.io',
+    platformPreference: 'TradingView',
+    tradingViewUsername: 'MarcusVance_ES',
+    thinkorswimAccountId: '',
+  });
+  assert.equal(validTradingViewPref.success, true);
 
+  const invalidTradingViewPref = CheckoutIdentityPlatformStepSchema.safeParse({
+    customerName: 'Marcus Vance',
+    customerEmail: 'marcus.vance@apexquant.io',
+    platformPreference: 'TradingView',
+    tradingViewUsername: '',
+    thinkorswimAccountId: 'TOS-994182',
+  });
+  assert.equal(invalidTradingViewPref.success, false);
+
+  const validTosPref = CheckoutIdentityPlatformStepSchema.safeParse({
+    customerName: 'Elena Rostova',
+    customerEmail: 'elena@quantcapital.ch',
+    platformPreference: 'thinkorswim',
+    tradingViewUsername: '',
+    thinkorswimAccountId: 'TOS-884120',
+  });
+  assert.equal(validTosPref.success, true);
+
+  const invalidTosPref = CheckoutIdentityPlatformStepSchema.safeParse({
+    customerName: 'Elena Rostova',
+    customerEmail: 'elena@quantcapital.ch',
+    platformPreference: 'thinkorswim',
+    tradingViewUsername: 'Elena_QuantCH',
+    thinkorswimAccountId: '12',
+  });
+  assert.equal(invalidTosPref.success, false);
+});
