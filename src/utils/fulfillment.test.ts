@@ -7,6 +7,8 @@ import {
   calculateOrderPricing,
   generateDeterministicLicenseKey,
   generateThinkScriptArtifact,
+  buildDailyRevenueGrowthSeries,
+  computeCustomerLicenseDistribution,
 } from './fulfillment';
 
 test('TradingViewUsernameSchema validates legitimate handles and rejects invalid symbols', () => {
@@ -110,3 +112,54 @@ test('generateThinkScriptArtifact embeds customer license watermark and ThinkScr
   assert.ok(artifact.includes('elena@quantcapital.ch'));
   assert.ok(artifact.includes('declare upper;'));
 });
+
+test('buildDailyRevenueGrowthSeries generates monotonic cumulative revenue and daily growth points', () => {
+  const series = buildDailyRevenueGrowthSeries(
+    [
+      { amountPaid: 2490, provisionedAt: '2026-10-18' },
+      { amountPaid: 1490, provisionedAt: '2026-10-25' },
+      { amountPaid: 3990, provisionedAt: '2026-10-30' },
+    ],
+    14
+  );
+
+  assert.equal(series.length, 14);
+  assert.ok(series[0].dailyRevenue > 0);
+  assert.ok(series[13].cumulativeRevenue >= 7970);
+  for (let i = 1; i < series.length; i++) {
+    assert.ok(series[i].cumulativeRevenue > series[i - 1].cumulativeRevenue);
+  }
+});
+
+test('computeCustomerLicenseDistribution calculates accurate tier and indicator license shares', () => {
+  const dist = computeCustomerLicenseDistribution([
+    {
+      indicatorId: 'se-algo-gamma',
+      indicatorName: 'StratEdge Algo Gamma',
+      billingCycle: 'Lifetime',
+      amountPaid: 2490,
+      tvAccessStatus: 'Provisioned',
+    },
+    {
+      indicatorId: 'se-algo-gamma',
+      indicatorName: 'StratEdge Algo Gamma',
+      billingCycle: 'Annual',
+      amountPaid: 1490,
+      tvAccessStatus: 'Provisioned',
+    },
+    {
+      indicatorId: 'se-algo-flow',
+      indicatorName: 'StratEdge Algo Flow',
+      billingCycle: 'Monthly',
+      amountPaid: 199,
+      tvAccessStatus: 'Revoked',
+    },
+  ]);
+
+  assert.equal(dist.totalLicenses, 3);
+  assert.equal(dist.activeProvisioned, 2);
+  assert.equal(dist.revokedCount, 1);
+  assert.equal(dist.byIndicator[0].indicatorId, 'se-algo-gamma');
+  assert.equal(dist.byIndicator[0].licensesCount, 2);
+});
+

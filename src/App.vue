@@ -5,7 +5,7 @@ import { usePlatformStore } from './stores/platformStore';
 import StorefrontView from './components/StorefrontView.vue';
 import CheckoutView from './components/CheckoutView.vue';
 import ClientDashboard from './components/ClientDashboard.vue';
-import AdminFulfillmentView from './components/AdminFulfillmentView.vue';
+import AdminDashboard from './components/AdminDashboard.vue';
 import AuthModal from './components/AuthModal.vue';
 import CartDrawer from './components/CartDrawer.vue';
 
@@ -272,7 +272,7 @@ onMounted(() => {
         v-else-if="activeView === 'dashboard'"
         @navigate="setView"
       />
-      <AdminFulfillmentView
+      <AdminDashboard
         v-else
         @navigate="setView"
       />
