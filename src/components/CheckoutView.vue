@@ -8,11 +8,12 @@ import {
 import {
   SecureCheckoutPaymentSchema,
   CheckoutIdentityPlatformStepSchema,
-  CheckoutStep1Schema,
+  CheckoutOrderSummaryBindingStepSchema,
   calculateOrderPricing,
   type PlatformPreference,
 } from '../utils/fulfillment';
 import CheckoutStepIdentityPlatform from './CheckoutStepIdentityPlatform.vue';
+import CheckoutStepOrderSummaryBinding from './CheckoutStepOrderSummaryBinding.vue';
 
 const emit = defineEmits<{
   (e: 'navigate', view: 'storefront' | 'checkout' | 'dashboard' | 'admin'): void;
@@ -288,20 +289,31 @@ function validateAndAdvanceFromStep1() {
   currentStep.value = 2;
 }
 
-// Step 2 Validation: Model, Tier & Shopping Cart Configuration
+// Step 2 Validation: Order Summary, License Key Binding & Terms Acceptance
 function validateAndAdvanceFromStep2() {
   clearErrors();
-  const parsed = CheckoutStep1Schema.safeParse({
+  const v = paymentForm.state.values;
+  const parsed = CheckoutOrderSummaryBindingStepSchema.safeParse({
     checkoutMode: checkoutMode.value,
     indicatorId: store.selectedIndicatorId || 'se-institutional-bundle',
     billingCycle: store.selectedBillingCycle,
     cartItemCount: store.cartItems.length,
+    platformPreference: platformPreference.value,
+    tradingViewUsername: v.tradingViewUsername,
+    thinkorswimAccountId: v.thinkorswimAccountId,
+    acceptTerms: v.acceptTerms,
   });
 
   if (!parsed.success) {
+    for (const issue of parsed.error.issues) {
+      const key = String(issue.path[0] || 'form');
+      if (!fieldErrors[key]) {
+        fieldErrors[key] = issue.message;
+      }
+    }
     bannerError.value =
       parsed.error.issues[0]?.message ||
-      'Please select an indicator or add items to your cart.';
+      'Please verify your order summary, license key binding handle, and terms of service.';
     return;
   }
 
@@ -575,10 +587,10 @@ async function downloadReceiptStudy(lic: LicenseRecord) {
             </span>
             <div>
               <div class="mono" style="font-size: 0.72rem; color: var(--accent-sky);">
-                STEP 02 · CART &amp; TIER
+                STEP 02 · ORDER &amp; LICENSE BINDING
               </div>
               <div style="font-weight: 700; font-size: 0.92rem; color: var(--text-primary);">
-                Model &amp; Cart Selection
+                Summary, Handle &amp; Terms
               </div>
             </div>
           </button>
@@ -806,280 +818,48 @@ async function downloadReceiptStudy(lic: LicenseRecord) {
           </div>
 
           <!-- ===============================================================
-               STEP 2: MODEL, MEMBERSHIP TIER & SHOPPING CART SELECTION
+               STEP 2: ORDER SUMMARY, LICENSE KEY BINDING & TERMS ACCEPTANCE
                =============================================================== -->
           <div
             v-show="wizardLayoutMode === 'express' || currentStep === 2"
             data-testid="checkout-step-2"
-            :style="{
-              paddingBottom: wizardLayoutMode === 'express' ? '22px' : '6px',
-              marginBottom: wizardLayoutMode === 'express' ? '22px' : '0',
-              borderBottom:
-                wizardLayoutMode === 'express' ? '1px solid var(--border-hairline)' : 'none',
-            }"
           >
-            <div class="meta-line" style="margin-bottom: 12px;">
-              <span class="meta-accent">Step 02 of 03</span>
-              <span class="meta-sep" aria-hidden="true">·</span>
-              <span>Configure Indicator Model, Membership Tier &amp; Shopping Cart</span>
-            </div>
-
-            <!-- Single Model Selection Mode -->
-            <div v-if="checkoutMode === 'single'">
-              <div class="form-row-2">
-                <div class="form-field">
-                  <label for="chk-indicator-select" class="form-label">
-                    Quantitative Indicator / Suite
-                  </label>
-                  <select
-                    id="chk-indicator-select"
-                    v-model="store.selectedIndicatorId"
-                    class="form-select"
-                    data-testid="checkout-indicator-select"
-                  >
-                    <option
-                      v-for="ind in store.indicators"
-                      :key="ind.id"
-                      :value="ind.id"
-                    >
-                      {{ ind.name }} (${{ ind.priceMonthly }}/mo · ${{ ind.priceAnnual }}/yr)
-                    </option>
-                  </select>
-                </div>
-
-                <div class="form-field">
-                  <label class="form-label">Membership Billing Cadence</label>
-                  <div
-                    class="segmented-group"
-                    style="width: 100%; display: grid; grid-template-columns: repeat(3, 1fr);"
-                  >
-                    <button
-                      v-for="cad in (['Monthly', 'Annual', 'Lifetime'] as const)"
-                      :key="cad"
-                      type="button"
-                      class="segmented-btn"
-                      :class="{ active: store.selectedBillingCycle === cad }"
-                      @click="store.selectedBillingCycle = cad"
-                    >
-                      {{ cad }}
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Selected Indicator Telemetry Preview + Add to Multi-Item Cart Option -->
-              <div
-                v-if="store.selectedIndicator"
-                style="
-                  padding: 16px;
-                  background: rgba(5, 8, 16, 0.72);
-                  border: 1px solid var(--border-subtle);
-                  border-radius: var(--radius-md);
-                  margin-top: 8px;
-                  margin-bottom: 16px;
-                "
-              >
-                <div
-                  style="
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: flex-start;
-                    gap: 12px;
-                    flex-wrap: wrap;
-                  "
-                >
-                  <div>
-                    <div class="meta-line">
-                      <span class="meta-accent">{{ store.selectedIndicator.category }}</span>
-                      <span class="meta-sep" aria-hidden="true">·</span>
-                      <span class="mono">{{ store.selectedIndicator.version }}</span>
-                      <span class="meta-sep" aria-hidden="true">·</span>
-                      <span class="mono" style="color: var(--accent-emerald-bright);">
-                        {{ store.selectedIndicator.winRatePct }}% Verified Win Rate
-                      </span>
-                    </div>
-                    <strong style="font-size: 1.05rem; display: block; margin-top: 4px;">
-                      {{ store.selectedIndicator.name }}
-                    </strong>
-                    <p style="font-size: 0.82rem; color: var(--text-secondary); margin-top: 4px;">
-                      {{ store.selectedIndicator.tagline }}
-                    </p>
-                  </div>
-
-                  <button
-                    type="button"
-                    class="btn-secondary"
-                    style="padding: 6px 12px; min-height: 32px; font-size: 0.78rem;"
-                    data-testid="step2-add-to-cart-btn"
-                    @click="
-                      store.addToCart(
-                        store.selectedIndicator.id,
-                        store.selectedBillingCycle,
-                        false
-                      );
-                      checkoutMode = 'cart';
-                    "
-                  >
-                    + Add to Multi-Item Cart ({{ store.cartTotals.itemCount }})
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <!-- Multi-Item Shopping Cart Mode inside Step 2 -->
-            <div v-else data-testid="step2-cart-manager">
-              <div
-                v-if="store.detailedCartItems.length > 0"
-                style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px;"
-              >
-                <div
-                  v-for="item in store.detailedCartItems"
-                  :key="`${item.indicator.id}-${item.index}`"
-                  style="
-                    padding: 14px 16px;
-                    background: rgba(5, 8, 16, 0.75);
-                    border: 1px solid var(--border-subtle);
-                    border-radius: var(--radius-md);
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center;
-                    gap: 12px;
-                    flex-wrap: wrap;
-                  "
-                  data-testid="step2-cart-item"
-                >
-                  <div>
-                    <div class="meta-line" style="font-size: 0.74rem;">
-                      <span class="meta-accent">{{ item.indicator.category }}</span>
-                      <span class="meta-sep" aria-hidden="true">·</span>
-                      <span class="mono">{{ item.indicator.version }}</span>
-                    </div>
-                    <strong style="font-size: 0.96rem; color: var(--text-primary);">
-                      {{ item.indicator.name }}
-                    </strong>
-                  </div>
-
-                  <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
-                    <div class="segmented-group" style="padding: 2px;">
-                      <button
-                        v-for="cad in (['Monthly', 'Annual', 'Lifetime'] as const)"
-                        :key="cad"
-                        type="button"
-                        class="segmented-btn"
-                        style="padding: 4px 8px; min-height: 26px; font-size: 0.72rem;"
-                        :class="{ active: item.billingCycle === cad }"
-                        @click="store.updateCartItemCycle(item.index, cad)"
-                      >
-                        {{ cad }}
-                      </button>
-                    </div>
-
-                    <span
-                      class="mono"
-                      style="font-weight: 700; color: var(--accent-emerald-bright); min-width: 72px; text-align: right;"
-                    >
-                      ${{ item.finalPrice.toLocaleString() }}
-                    </span>
-
-                    <button
-                      type="button"
-                      class="btn-ghost"
-                      style="padding: 4px 8px; min-height: 26px; font-size: 0.72rem;"
-                      @click="store.removeFromCart(item.index)"
-                    >
-                      Remove
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Empty Cart Fallback inside Step 2 -->
-              <div
-                v-else
-                style="
-                  padding: 20px;
-                  background: rgba(5, 8, 16, 0.72);
-                  border: 1px solid var(--border-subtle);
-                  border-radius: var(--radius-md);
-                  margin-bottom: 16px;
-                  text-align: center;
-                "
-              >
-                <p style="font-weight: 600; color: var(--text-primary);">
-                  Your Multi-Item Cart is Empty
-                </p>
-                <p style="font-size: 0.82rem; color: var(--text-secondary); margin-top: 4px;">
-                  Add one or more institutional indicators below or switch to Direct Indicator
-                  License:
-                </p>
-              </div>
-
-              <!-- Quick-Add Companion Indicators Bar -->
-              <div
-                style="
-                  padding: 12px 14px;
-                  background: rgba(16, 185, 129, 0.05);
-                  border: 1px solid var(--border-subtle);
-                  border-radius: var(--radius-md);
-                  margin-bottom: 16px;
-                "
-              >
-                <div style="font-size: 0.78rem; color: var(--text-secondary); margin-bottom: 8px;">
-                  Quick-Add Indicator or Bundle to Cart:
-                </div>
-                <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-                  <button
-                    v-for="ind in store.indicators.slice(0, 4)"
-                    :key="ind.id"
-                    type="button"
-                    class="btn-ghost"
-                    style="padding: 5px 10px; min-height: 28px; font-size: 0.75rem;"
-                    @click="store.addToCart(ind.id, 'Annual', false)"
-                  >
-                    + {{ ind.name.replace('StratEdge ', '') }} (${{ ind.priceAnnual }}/yr)
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <div
-              v-if="bannerError && currentStep === 2"
-              class="form-error"
-              style="margin-bottom: 12px;"
-              role="alert"
-            >
-              {{ bannerError }}
-            </div>
-
-            <!-- Wizard Step 2 Back / Next CTAs -->
-            <div
-              v-if="wizardLayoutMode === 'wizard'"
-              style="
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                gap: 12px;
-                margin-top: 14px;
-                flex-wrap: wrap;
-              "
-            >
-              <button
-                type="button"
-                class="btn-ghost"
-                data-testid="checkout-back-step-2-btn"
-                @click="currentStep = 1"
-              >
-                ← Back to Step 01 (Identity &amp; Platform)
-              </button>
-              <button
-                type="button"
-                class="btn-primary"
-                data-testid="checkout-next-step-2-btn"
-                @click="validateAndAdvanceFromStep2"
-              >
-                Continue to Step 03: Payment &amp; Settlement →
-              </button>
-            </div>
+            <paymentForm.Field name="customerEmail">
+              <template #default="{ field: emailField }">
+                <paymentForm.Field name="tradingViewUsername">
+                  <template #default="{ field: tvField }">
+                    <paymentForm.Field name="thinkorswimAccountId">
+                      <template #default="{ field: tosField }">
+                        <paymentForm.Field name="acceptTerms">
+                          <template #default="{ field: termsField }">
+                            <CheckoutStepOrderSummaryBinding
+                              :checkout-mode="checkoutMode"
+                              :platform-preference="platformPreference"
+                              :customer-email="emailField.state.value"
+                              :trading-view-username="tvField.state.value"
+                              :thinkorswim-account-id="tosField.state.value"
+                              :coupon-code="couponInput"
+                              :accept-terms="termsField.state.value"
+                              :field-errors="fieldErrors"
+                              :banner-error="currentStep === 2 ? bannerError : ''"
+                              :wizard-layout-mode="wizardLayoutMode"
+                              @update:checkout-mode="(v) => (checkoutMode = v)"
+                              @update:platform-preference="(v) => (platformPreference = v)"
+                              @update:trading-view-username="(v) => tvField.handleChange(v)"
+                              @update:thinkorswim-account-id="(v) => tosField.handleChange(v)"
+                              @update:coupon-code="(v) => (couponInput = v)"
+                              @update:accept-terms="(v) => termsField.handleChange(v)"
+                              @back="currentStep = 1"
+                              @next="validateAndAdvanceFromStep2"
+                            />
+                          </template>
+                        </paymentForm.Field>
+                      </template>
+                    </paymentForm.Field>
+                  </template>
+                </paymentForm.Field>
+              </template>
+            </paymentForm.Field>
           </div>
 
           <!-- ===============================================================

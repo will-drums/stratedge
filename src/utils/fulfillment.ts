@@ -145,6 +145,57 @@ export const CheckoutStep2Schema = z.object({
   thinkorswimAccountId: z.string().trim().optional().default(''),
 });
 
+export const CheckoutOrderSummaryBindingStepSchema = z
+  .object({
+    checkoutMode: z.enum(['single', 'cart']),
+    indicatorId: z.string().trim().min(1, 'Select a quantitative indicator or suite'),
+    billingCycle: z.enum(['Monthly', 'Annual', 'Lifetime']),
+    cartItemCount: z.number().int().min(0),
+    platformPreference: PlatformPreferenceSchema.default('TradingView'),
+    tradingViewUsername: z.string().trim().optional().default(''),
+    thinkorswimAccountId: z.string().trim().optional().default(''),
+    acceptTerms: z
+      .boolean()
+      .refine((val) => val === true, {
+        message: 'You must accept the institutional license & non-redistribution terms to proceed',
+      }),
+  })
+  .superRefine((data, ctx) => {
+    if (data.checkoutMode === 'cart' && data.cartItemCount < 1) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['cartItemCount'],
+        message: 'Add at least one indicator to your cart or switch to Direct Indicator License',
+      });
+    }
+
+    if (data.platformPreference === 'TradingView' || data.platformPreference === 'Dual') {
+      const tvParsed = TradingViewUsernameSchema.safeParse(data.tradingViewUsername);
+      if (!tvParsed.success) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['tradingViewUsername'],
+          message:
+            tvParsed.error.issues[0]?.message ||
+            'Valid TradingView username is required to bind your license key for Invite-Only ACL provisioning',
+        });
+      }
+    }
+
+    if (data.platformPreference === 'thinkorswim' || data.platformPreference === 'Dual') {
+      const tosParsed = ThinkorswimAccountIdSchema.safeParse(data.thinkorswimAccountId);
+      if (!tosParsed.success) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['thinkorswimAccountId'],
+          message:
+            tosParsed.error.issues[0]?.message ||
+            'Valid Charles Schwab thinkorswim Account ID is required to bind your .ts license watermark',
+        });
+      }
+    }
+  });
+
 export const CheckoutStep3Schema = z.object({
   paymentMethod: z.enum(['Card', 'Wire', 'USDC']).default('Card'),
   cardholderName: z.string().trim().min(2, 'Cardholder name is required'),

@@ -4,6 +4,7 @@ import {
   CheckoutFormSchema,
   SecureCheckoutPaymentSchema,
   CheckoutIdentityPlatformStepSchema,
+  CheckoutOrderSummaryBindingStepSchema,
   CheckoutStep1Schema,
   CheckoutStep2Schema,
   CheckoutStep3Schema,
@@ -241,3 +242,54 @@ test('CheckoutIdentityPlatformStepSchema validates user identity and platform pr
   });
   assert.equal(invalidTosPref.success, false);
 });
+
+test('CheckoutOrderSummaryBindingStepSchema validates order summary, license key binding handle, and terms acceptance', () => {
+  const validStep2 = CheckoutOrderSummaryBindingStepSchema.safeParse({
+    checkoutMode: 'single',
+    indicatorId: 'se-institutional-bundle',
+    billingCycle: 'Annual',
+    cartItemCount: 0,
+    platformPreference: 'TradingView',
+    tradingViewUsername: 'MarcusVance_ES',
+    thinkorswimAccountId: 'TOS-994182',
+    acceptTerms: true,
+  });
+  assert.equal(validStep2.success, true);
+
+  const missingTerms = CheckoutOrderSummaryBindingStepSchema.safeParse({
+    checkoutMode: 'single',
+    indicatorId: 'se-institutional-bundle',
+    billingCycle: 'Annual',
+    cartItemCount: 0,
+    platformPreference: 'TradingView',
+    tradingViewUsername: 'MarcusVance_ES',
+    thinkorswimAccountId: 'TOS-994182',
+    acceptTerms: false,
+  });
+  assert.equal(missingTerms.success, false);
+
+  const missingTvBinding = CheckoutOrderSummaryBindingStepSchema.safeParse({
+    checkoutMode: 'single',
+    indicatorId: 'se-institutional-bundle',
+    billingCycle: 'Annual',
+    cartItemCount: 0,
+    platformPreference: 'TradingView',
+    tradingViewUsername: '',
+    thinkorswimAccountId: 'TOS-994182',
+    acceptTerms: true,
+  });
+  assert.equal(missingTvBinding.success, false);
+
+  const validTosBinding = CheckoutOrderSummaryBindingStepSchema.safeParse({
+    checkoutMode: 'single',
+    indicatorId: 'se-institutional-bundle',
+    billingCycle: 'Lifetime',
+    cartItemCount: 0,
+    platformPreference: 'thinkorswim',
+    tradingViewUsername: '',
+    thinkorswimAccountId: 'TOS-884120',
+    acceptTerms: true,
+  });
+  assert.equal(validTosBinding.success, true);
+});
+
