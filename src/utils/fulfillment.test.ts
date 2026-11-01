@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import {
   CheckoutFormSchema,
   SecureCheckoutPaymentSchema,
+  CheckoutStep1Schema,
+  CheckoutStep2Schema,
+  CheckoutStep3Schema,
   TradingViewUsernameSchema,
   calculateOrderPricing,
   generateDeterministicLicenseKey,
@@ -162,4 +165,42 @@ test('computeCustomerLicenseDistribution calculates accurate tier and indicator 
   assert.equal(dist.byIndicator[0].indicatorId, 'se-algo-gamma');
   assert.equal(dist.byIndicator[0].licensesCount, 2);
 });
+
+test('3-step checkout schemas validate each step independently', () => {
+  const emptyCartStep1 = CheckoutStep1Schema.safeParse({
+    checkoutMode: 'cart',
+    indicatorId: 'se-algo-gamma',
+    billingCycle: 'Annual',
+    cartItemCount: 0,
+  });
+  assert.equal(emptyCartStep1.success, false);
+
+  const validCartStep1 = CheckoutStep1Schema.safeParse({
+    checkoutMode: 'cart',
+    indicatorId: 'se-algo-gamma',
+    billingCycle: 'Annual',
+    cartItemCount: 2,
+  });
+  assert.equal(validCartStep1.success, true);
+
+  const validStep2 = CheckoutStep2Schema.safeParse({
+    customerName: 'Marcus Vance',
+    customerEmail: 'marcus.vance@apexquant.io',
+    tradingViewUsername: 'MarcusVance_ES',
+    thinkorswimAccountId: 'TOS-994182',
+  });
+  assert.equal(validStep2.success, true);
+
+  const validStep3 = CheckoutStep3Schema.safeParse({
+    paymentMethod: 'Card',
+    cardholderName: 'Marcus Vance',
+    cardNumber: '4242 4242 4242 4242',
+    cardExpiry: '08/29',
+    cardCvc: '842',
+    billingZip: '10005',
+    acceptTerms: true,
+  });
+  assert.equal(validStep3.success, true);
+});
+
 

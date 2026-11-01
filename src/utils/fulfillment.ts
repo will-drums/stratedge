@@ -76,6 +76,61 @@ export const AdminProvisionSchema = z.object({
   billingCycle: z.enum(['Monthly', 'Annual', 'Lifetime']),
 });
 
+export const CheckoutStep1Schema = z.object({
+  checkoutMode: z.enum(['single', 'cart']),
+  indicatorId: z.string().min(1, 'Please select an indicator or suite'),
+  billingCycle: z.enum(['Monthly', 'Annual', 'Lifetime']),
+  cartItemCount: z.number().int().nonnegative(),
+}).refine(
+  (data) => (data.checkoutMode === 'cart' ? data.cartItemCount > 0 : Boolean(data.indicatorId)),
+  {
+    message: 'Your shopping cart is empty. Add at least one indicator or switch to Direct Indicator License.',
+    path: ['cartItemCount'],
+  }
+);
+
+export const CheckoutStep2Schema = z.object({
+  customerName: z.string().trim().min(2, 'Full name is required (min 2 characters)'),
+  customerEmail: z.string().trim().email('Enter a valid institutional or personal email address'),
+  tradingViewUsername: TradingViewUsernameSchema,
+  thinkorswimAccountId: z.string().trim().optional().default(''),
+});
+
+export const CheckoutStep3Schema = z.object({
+  paymentMethod: z.enum(['Card', 'Wire', 'USDC']).default('Card'),
+  cardholderName: z.string().trim().min(2, 'Cardholder name is required'),
+  cardNumber: z
+    .string()
+    .trim()
+    .refine(
+      (val) => {
+        const digits = val.replace(/[\s-]/g, '');
+        return /^\d{12,19}$/.test(digits);
+      },
+      { message: 'Enter a valid 12 to 19 digit card number' }
+    ),
+  cardExpiry: z
+    .string()
+    .trim()
+    .regex(
+      /^(0[1-9]|1[0-2])\/\d{2}$/,
+      'Expiration must be in MM/YY format (e.g. 08/29)'
+    ),
+  cardCvc: z
+    .string()
+    .trim()
+    .regex(/^\d{3,4}$/, 'Security CVC must be 3 or 4 digits'),
+  billingZip: z
+    .string()
+    .trim()
+    .min(3, 'Billing postal / ZIP code is required'),
+  acceptTerms: z
+    .boolean()
+    .refine((val) => val === true, {
+      message: 'You must accept the institutional license & non-redistribution terms',
+    }),
+});
+
 export interface PricingBreakdown {
   basePrice: number;
   discountPct: number;

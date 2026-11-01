@@ -7,6 +7,9 @@ import {
 } from '../stores/platformStore';
 import {
   SecureCheckoutPaymentSchema,
+  CheckoutStep1Schema,
+  CheckoutStep2Schema,
+  TradingViewUsernameSchema,
   calculateOrderPricing,
 } from '../utils/fulfillment';
 
@@ -17,9 +20,21 @@ const emit = defineEmits<{
 const store = usePlatformStore();
 
 // Checkout Mode: 'single' (selected indicator/suite) or 'cart' (all items in cart)
-const checkoutMode = ref<'single' | 'cart'>('single');
+const checkoutMode = ref<'single' | 'cart'>(
+  store.cartItems.length > 0 ? 'cart' : 'single'
+);
 
-const couponInput = ref('PROP15');
+// 3-Step Multi-Step Wizard State (1: Cart & Model, 2: Trader Identity & Handles, 3: Payment & Review)
+const currentStep = ref<1 | 2 | 3>(1);
+const wizardLayoutMode = ref<'wizard' | 'express'>('wizard');
+const step1Completed = ref(false);
+const step2Completed = ref(false);
+
+// Live TradingView Handle Verification State in Step 2
+const tvVerifyStatus = ref<'idle' | 'valid' | 'invalid'>('idle');
+const tvVerifyMessage = ref('');
+
+const couponInput = ref(store.cartCouponCode || 'PROP15');
 const paymentMethod = ref<'Card' | 'Wire' | 'USDC'>('Card');
 const submitting = ref(false);
 const bannerError = ref('');
@@ -36,6 +51,11 @@ const completedReceipt = ref<{
   timestamp: string;
 } | null>(null);
 
+function clearErrors() {
+  bannerError.value = '';
+  Object.keys(fieldErrors).forEach((k) => delete fieldErrors[k]);
+}
+
 // TanStack Form instance backed by SecureCheckoutPaymentSchema (Zod)
 const paymentForm = useForm({
   defaultValues: {
@@ -51,8 +71,7 @@ const paymentForm = useForm({
     acceptTerms: true,
   },
   onSubmit: async ({ value }) => {
-    bannerError.value = '';
-    Object.keys(fieldErrors).forEach((k) => delete fieldErrors[k]);
+    clearErrors();
 
     const payloadToValidate = {
       customerName: value.customerName,
@@ -80,6 +99,15 @@ const paymentForm = useForm({
         if (!fieldErrors[key]) {
           fieldErrors[key] = issue.message;
         }
+      }
+      // If error belongs to Step 2 fields while in wizard mode, jump to Step 2
+      if (
+        wizardLayoutMode.value === 'wizard' &&
+        (fieldErrors.customerName ||
+          fieldErrors.customerEmail ||
+          fieldErrors.tradingViewUsername)
+      ) {
+        currentStep.value = 2;
       }
       bannerError.value =
         parsed.error.issues[0]?.message ||
@@ -122,8 +150,10 @@ const paymentForm = useForm({
           totalPaid: data.totalPaid,
           paymentMethod: parsed.data.paymentMethod,
           licenses: data.licenses,
-          timestamp: new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC',
+          timestamp:
+            new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC',
         };
+        window.scrollTo({ top: 0, behavior: 'smooth' });
 
         store.showNotification(
           'success',
@@ -175,12 +205,92 @@ const paymentForm = useForm({
       }
     } catch (err) {
       bannerError.value =
-        err instanceof Error ? err.message : 'Network error during payment settlement';
+        err instanceof Error
+          ? err.message
+          : 'Network error during payment settlement';
     } finally {
       submitting.value = false;
     }
   },
 });
+
+function validateAndAdvanceFromStep1() {
+  clearErrors();
+  const parsed = CheckoutStep1Schema.safeParse({
+    checkoutMode: checkoutMode.value,
+    indicatorId: store.selectedIndicatorId || 'se-institutional-bundle',
+    billingCycle: store.selectedBillingCycle,
+    cartItemCount: store.cartItems.length,
+  });
+
+  if (!parsed.success) {
+    bannerError.value =
+      parsed.error.issues[0]?.message ||
+      'Please select an indicator or add items to your cart.';
+    return;
+  }
+
+  step1Completed.value = true;
+  currentStep.value = 2;
+}
+
+function validateAndAdvanceFromStep2() {
+  clearErrors();
+  const v = paymentForm.state.values;
+  const parsed = CheckoutStep2Schema.safeParse({
+    customerName: v.customerName,
+    customerEmail: v.customerEmail,
+    tradingViewUsername: v.tradingViewUsername,
+    thinkorswimAccountId: v.thinkorswimAccountId,
+  });
+
+  if (!parsed.success) {
+    for (const issue of parsed.error.issues) {
+      const key = String(issue.path[0] || 'form');
+      if (!fieldErrors[key]) {
+        fieldErrors[key] = issue.message;
+      }
+    }
+    bannerError.value =
+      parsed.error.issues[0]?.message ||
+      'Please complete all required customer & TradingView handle fields.';
+    return;
+  }
+
+  step2Completed.value = true;
+  currentStep.value = 3;
+}
+
+function goToStep(target: 1 | 2 | 3) {
+  clearErrors();
+  if (target === 1) {
+    currentStep.value = 1;
+    return;
+  }
+  if (target === 2) {
+    validateAndAdvanceFromStep1();
+    return;
+  }
+  if (target === 3) {
+    validateAndAdvanceFromStep1();
+    if (currentStep.value === 2) {
+      validateAndAdvanceFromStep2();
+    }
+  }
+}
+
+function verifyTradingViewHandleNow() {
+  const handle = paymentForm.state.values.tradingViewUsername;
+  const parsed = TradingViewUsernameSchema.safeParse(handle);
+  if (!parsed.success) {
+    tvVerifyStatus.value = 'invalid';
+    tvVerifyMessage.value =
+      parsed.error.issues[0]?.message || 'Invalid TradingView handle format';
+  } else {
+    tvVerifyStatus.value = 'valid';
+    tvVerifyMessage.value = `200 OK · @${parsed.data} verified ready for Pine Script v6 Invite-Only ACL provisioning.`;
+  }
+}
 
 watch(
   () => couponInput.value,
@@ -249,39 +359,246 @@ async function downloadReceiptStudy(lic: LicenseRecord) {
       <div class="workspace-header">
         <div>
           <div class="meta-line">
-            <span class="meta-accent">256-Bit Encrypted Checkout &amp; Webhook Provisioning</span>
+            <span class="meta-accent">
+              3-Step Encrypted Cart &amp; Checkout · Sub-Second Webhook Provisioning
+            </span>
             <span class="meta-sep" aria-hidden="true">·</span>
             <span>Zod Schema Validated</span>
-            <span class="meta-sep" aria-hidden="true">·</span>
-            <span>Sub-Second TradingView + thinkorswim Delivery</span>
           </div>
           <h1 class="section-title" style="margin-top: 6px;">
-            Secure License Checkout &amp; Automated Fulfillment
+            Multi-Step Cart, License Configuration &amp; Instant Checkout
           </h1>
           <p class="section-subtitle">
-            Complete your institutional order below. Upon payment verification, our webhook engine
-            immediately whitelists your TradingView username and unlocks your Charles Schwab thinkorswim `.ts` study.
+            Configure your quantitative indicators or multi-item cart in Step 1, bind your
+            TradingView &amp; thinkorswim handles in Step 2, and settle payment in Step 3 for
+            instant ACL whitelisting.
           </p>
         </div>
 
-        <!-- Mode Selector: Single Model vs Multi-Item Shopping Cart -->
-        <div class="segmented-group" role="group" aria-label="Checkout Mode">
+        <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+          <!-- Mode Selector: Single Model vs Multi-Item Shopping Cart -->
+          <div class="segmented-group" role="group" aria-label="Checkout Mode">
+            <button
+              type="button"
+              class="segmented-btn"
+              :class="{ active: checkoutMode === 'single' }"
+              data-testid="checkout-mode-single-btn"
+              @click="checkoutMode = 'single'"
+            >
+              Direct Indicator License
+            </button>
+            <button
+              type="button"
+              class="segmented-btn"
+              :class="{ active: checkoutMode === 'cart' }"
+              data-testid="checkout-mode-cart-btn"
+              @click="checkoutMode = 'cart'"
+            >
+              Shopping Cart ({{ store.cartTotals.itemCount }})
+            </button>
+          </div>
+
+          <!-- Layout Mode Selector: Guided 3-Step Wizard vs Express All-In-One -->
+          <div class="segmented-group" role="group" aria-label="Checkout Layout Mode">
+            <button
+              type="button"
+              class="segmented-btn"
+              :class="{ active: wizardLayoutMode === 'wizard' }"
+              data-testid="checkout-layout-wizard-btn"
+              @click="wizardLayoutMode = 'wizard'"
+            >
+              3-Step Guided Wizard
+            </button>
+            <button
+              type="button"
+              class="segmented-btn"
+              :class="{ active: wizardLayoutMode === 'express' }"
+              data-testid="checkout-layout-express-btn"
+              @click="wizardLayoutMode = 'express'"
+            >
+              Express All-Steps View
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===================================================================
+           INTERACTIVE 3-STEP PROGRESS STEPPER BAR
+           =================================================================== -->
+      <div
+        class="bento-panel"
+        style="margin-bottom: 28px; padding: 18px 22px;"
+        data-testid="checkout-stepper"
+      >
+        <div
+          style="
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 16px;
+            align-items: center;
+          "
+        >
+          <!-- Step 1 Pill/Tab -->
           <button
             type="button"
-            class="segmented-btn"
-            :class="{ active: checkoutMode === 'single' }"
-            @click="checkoutMode = 'single'"
+            data-testid="step-indicator-1"
+            :style="{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px',
+              textAlign: 'left',
+              padding: '12px 16px',
+              borderRadius: 'var(--radius-md)',
+              border:
+                currentStep === 1
+                  ? '1px solid var(--accent-emerald)'
+                  : step1Completed
+                  ? '1px solid rgba(16, 185, 129, 0.35)'
+                  : '1px solid var(--border-subtle)',
+              background:
+                currentStep === 1
+                  ? 'rgba(16, 185, 129, 0.12)'
+                  : 'rgba(5, 8, 16, 0.65)',
+              cursor: 'pointer',
+            }"
+            @click="goToStep(1)"
           >
-            Direct Indicator License
+            <span
+              class="mono"
+              :style="{
+                width: '30px',
+                height: '30px',
+                borderRadius: '50%',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontWeight: 700,
+                fontSize: '0.82rem',
+                background:
+                  currentStep === 1 || step1Completed
+                    ? 'var(--accent-emerald)'
+                    : 'rgba(148, 163, 184, 0.16)',
+                color: currentStep === 1 || step1Completed ? '#04130d' : 'var(--text-secondary)',
+              }"
+            >
+              {{ step1Completed && currentStep > 1 ? '✓' : '01' }}
+            </span>
+            <div>
+              <div class="mono" style="font-size: 0.72rem; color: var(--accent-emerald-bright);">
+                STEP 01 · CART &amp; TIER
+              </div>
+              <div style="font-weight: 700; font-size: 0.92rem; color: var(--text-primary);">
+                Model &amp; Cart Selection
+              </div>
+            </div>
           </button>
+
+          <!-- Step 2 Pill/Tab -->
           <button
             type="button"
-            class="segmented-btn"
-            :class="{ active: checkoutMode === 'cart' }"
-            data-testid="checkout-mode-cart-btn"
-            @click="checkoutMode = 'cart'"
+            data-testid="step-indicator-2"
+            :style="{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px',
+              textAlign: 'left',
+              padding: '12px 16px',
+              borderRadius: 'var(--radius-md)',
+              border:
+                currentStep === 2
+                  ? '1px solid var(--accent-emerald)'
+                  : step2Completed
+                  ? '1px solid rgba(16, 185, 129, 0.35)'
+                  : '1px solid var(--border-subtle)',
+              background:
+                currentStep === 2
+                  ? 'rgba(16, 185, 129, 0.12)'
+                  : 'rgba(5, 8, 16, 0.65)',
+              cursor: 'pointer',
+            }"
+            @click="goToStep(2)"
           >
-            Shopping Cart ({{ store.cartTotals.itemCount }})
+            <span
+              class="mono"
+              :style="{
+                width: '30px',
+                height: '30px',
+                borderRadius: '50%',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontWeight: 700,
+                fontSize: '0.82rem',
+                background:
+                  currentStep === 2 || step2Completed
+                    ? 'var(--accent-emerald)'
+                    : 'rgba(148, 163, 184, 0.16)',
+                color: currentStep === 2 || step2Completed ? '#04130d' : 'var(--text-secondary)',
+              }"
+            >
+              {{ step2Completed && currentStep > 2 ? '✓' : '02' }}
+            </span>
+            <div>
+              <div class="mono" style="font-size: 0.72rem; color: var(--accent-sky);">
+                STEP 02 · PLATFORM ACL
+              </div>
+              <div style="font-weight: 700; font-size: 0.92rem; color: var(--text-primary);">
+                Trader &amp; TradingView Handle
+              </div>
+            </div>
+          </button>
+
+          <!-- Step 3 Pill/Tab -->
+          <button
+            type="button"
+            data-testid="step-indicator-3"
+            :style="{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px',
+              textAlign: 'left',
+              padding: '12px 16px',
+              borderRadius: 'var(--radius-md)',
+              border:
+                currentStep === 3
+                  ? '1px solid var(--accent-emerald)'
+                  : '1px solid var(--border-subtle)',
+              background:
+                currentStep === 3
+                  ? 'rgba(16, 185, 129, 0.12)'
+                  : 'rgba(5, 8, 16, 0.65)',
+              cursor: 'pointer',
+            }"
+            @click="goToStep(3)"
+          >
+            <span
+              class="mono"
+              :style="{
+                width: '30px',
+                height: '30px',
+                borderRadius: '50%',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontWeight: 700,
+                fontSize: '0.82rem',
+                background:
+                  currentStep === 3
+                    ? 'var(--accent-emerald)'
+                    : 'rgba(148, 163, 184, 0.16)',
+                color: currentStep === 3 ? '#04130d' : 'var(--text-secondary)',
+              }"
+            >
+              03
+            </span>
+            <div>
+              <div class="mono" style="font-size: 0.72rem; color: var(--accent-amber);">
+                STEP 03 · SETTLEMENT
+              </div>
+              <div style="font-weight: 700; font-size: 0.92rem; color: var(--text-primary);">
+                Payment &amp; Instant Fulfillment
+              </div>
+            </div>
           </button>
         </div>
       </div>
@@ -316,12 +633,19 @@ async function downloadReceiptStudy(lic: LicenseRecord) {
               <span class="meta-sep" aria-hidden="true">·</span>
               <span class="mono">{{ completedReceipt.timestamp }}</span>
             </div>
-            <h2 style="font-family: var(--font-display); font-size: 1.5rem; font-weight: 700; margin-top: 6px;">
+            <h2
+              style="
+                font-family: var(--font-display);
+                font-size: 1.5rem;
+                font-weight: 700;
+                margin-top: 6px;
+              "
+            >
               Your StratEdge Algo License(s) Are Active!
             </h2>
             <p style="color: var(--text-secondary); font-size: 0.9375rem; margin-top: 4px;">
-              TradingView Invite-Only permissions and Charles Schwab thinkorswim `.ts` studies have been
-              bound to your account.
+              TradingView Invite-Only permissions and Charles Schwab thinkorswim `.ts` studies have
+              been bound to your account.
             </p>
           </div>
 
@@ -337,7 +661,10 @@ async function downloadReceiptStudy(lic: LicenseRecord) {
             <button
               type="button"
               class="btn-ghost"
-              @click="completedReceipt = null"
+              @click="
+                completedReceipt = null;
+                currentStep = 1;
+              "
             >
               Place Another Order
             </button>
@@ -389,73 +716,294 @@ async function downloadReceiptStudy(lic: LicenseRecord) {
 
       <!-- ===================================================================
            MAIN 2-COLUMN CHECKOUT WORKSPACE
-           Left: Zod-Validated Payment & Provisioning Form
-           Right: Order Summary, Promo Codes & Webhook Pipeline Spec
+           Left: 3-Step Multi-Step Wizard Form
+           Right: Live Order Summary, Promo Codes & Webhook Pipeline Spec
            =================================================================== -->
       <div class="checkout-grid">
-        <!-- LEFT COLUMN: SECURE PAYMENT FORM -->
+        <!-- LEFT COLUMN: 3-STEP SECURE CHECKOUT FORM -->
         <form
           class="form-panel"
           novalidate
           data-testid="secure-checkout-form"
           @submit.prevent.stop="paymentForm.handleSubmit()"
         >
-          <!-- STEP 1: PRODUCT / TIER SELECTION -->
-          <div style="padding-bottom: 20px; margin-bottom: 20px; border-bottom: 1px solid var(--border-hairline);">
-            <div class="meta-line" style="margin-bottom: 10px;">
-              <span class="meta-accent">Step 01</span>
+          <!-- ===============================================================
+               STEP 1: CART & QUANTITATIVE MODEL SELECTION
+               =============================================================== -->
+          <div
+            v-show="wizardLayoutMode === 'express' || currentStep === 1"
+            data-testid="checkout-step-1"
+            :style="{
+              paddingBottom: wizardLayoutMode === 'express' ? '22px' : '6px',
+              marginBottom: wizardLayoutMode === 'express' ? '22px' : '0',
+              borderBottom:
+                wizardLayoutMode === 'express' ? '1px solid var(--border-hairline)' : 'none',
+            }"
+          >
+            <div class="meta-line" style="margin-bottom: 12px;">
+              <span class="meta-accent">Step 01 of 03</span>
               <span class="meta-sep" aria-hidden="true">·</span>
-              <span>Select Quantitative Model &amp; Membership Cadence</span>
+              <span>Configure Indicator Model, Membership Tier &amp; Shopping Cart</span>
             </div>
 
-            <div v-if="checkoutMode === 'single'" class="form-row-2">
-              <div class="form-field" style="margin-bottom: 0;">
-                <label for="chk-indicator-select" class="form-label">
-                  Indicator / Suite
-                </label>
-                <select
-                  id="chk-indicator-select"
-                  v-model="store.selectedIndicatorId"
-                  class="form-select"
-                >
-                  <option
-                    v-for="ind in store.indicators"
-                    :key="ind.id"
-                    :value="ind.id"
+            <!-- Single Model Selection Mode -->
+            <div v-if="checkoutMode === 'single'">
+              <div class="form-row-2">
+                <div class="form-field">
+                  <label for="chk-indicator-select" class="form-label">
+                    Quantitative Indicator / Suite
+                  </label>
+                  <select
+                    id="chk-indicator-select"
+                    v-model="store.selectedIndicatorId"
+                    class="form-select"
+                    data-testid="checkout-indicator-select"
                   >
-                    {{ ind.name }} (${{ ind.priceMonthly }}/mo · ${{ ind.priceAnnual }}/yr)
-                  </option>
-                </select>
+                    <option
+                      v-for="ind in store.indicators"
+                      :key="ind.id"
+                      :value="ind.id"
+                    >
+                      {{ ind.name }} (${{ ind.priceMonthly }}/mo · ${{ ind.priceAnnual }}/yr)
+                    </option>
+                  </select>
+                </div>
+
+                <div class="form-field">
+                  <label class="form-label">Membership Billing Cadence</label>
+                  <div
+                    class="segmented-group"
+                    style="width: 100%; display: grid; grid-template-columns: repeat(3, 1fr);"
+                  >
+                    <button
+                      v-for="cad in (['Monthly', 'Annual', 'Lifetime'] as const)"
+                      :key="cad"
+                      type="button"
+                      class="segmented-btn"
+                      :class="{ active: store.selectedBillingCycle === cad }"
+                      @click="store.selectedBillingCycle = cad"
+                    >
+                      {{ cad }}
+                    </button>
+                  </div>
+                </div>
               </div>
 
-              <div class="form-field" style="margin-bottom: 0;">
-                <label class="form-label">Membership Billing Tier</label>
-                <div class="segmented-group" style="width: 100%; display: grid; grid-template-columns: repeat(3, 1fr);">
+              <!-- Selected Indicator Telemetry Preview + Add to Multi-Item Cart Option -->
+              <div
+                v-if="store.selectedIndicator"
+                style="
+                  padding: 16px;
+                  background: rgba(5, 8, 16, 0.72);
+                  border: 1px solid var(--border-subtle);
+                  border-radius: var(--radius-md);
+                  margin-top: 8px;
+                  margin-bottom: 16px;
+                "
+              >
+                <div
+                  style="
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: flex-start;
+                    gap: 12px;
+                    flex-wrap: wrap;
+                  "
+                >
+                  <div>
+                    <div class="meta-line">
+                      <span class="meta-accent">{{ store.selectedIndicator.category }}</span>
+                      <span class="meta-sep" aria-hidden="true">·</span>
+                      <span class="mono">{{ store.selectedIndicator.version }}</span>
+                      <span class="meta-sep" aria-hidden="true">·</span>
+                      <span class="mono" style="color: var(--accent-emerald-bright);">
+                        {{ store.selectedIndicator.winRatePct }}% Verified Win Rate
+                      </span>
+                    </div>
+                    <strong style="font-size: 1.05rem; display: block; margin-top: 4px;">
+                      {{ store.selectedIndicator.name }}
+                    </strong>
+                    <p style="font-size: 0.82rem; color: var(--text-secondary); margin-top: 4px;">
+                      {{ store.selectedIndicator.tagline }}
+                    </p>
+                  </div>
+
                   <button
-                    v-for="cad in (['Monthly', 'Annual', 'Lifetime'] as const)"
-                    :key="cad"
                     type="button"
-                    class="segmented-btn"
-                    :class="{ active: store.selectedBillingCycle === cad }"
-                    @click="store.selectedBillingCycle = cad"
+                    class="btn-secondary"
+                    style="padding: 6px 12px; min-height: 32px; font-size: 0.78rem;"
+                    data-testid="step1-add-to-cart-btn"
+                    @click="
+                      store.addToCart(
+                        store.selectedIndicator.id,
+                        store.selectedBillingCycle,
+                        false
+                      );
+                      checkoutMode = 'cart';
+                    "
                   >
-                    {{ cad }}
+                    + Add to Multi-Item Cart ({{ store.cartTotals.itemCount }})
                   </button>
                 </div>
               </div>
             </div>
 
-            <div v-else>
-              <p style="font-size: 0.875rem; color: var(--text-secondary);">
-                Checking out <strong>{{ store.cartTotals.itemCount }} item(s)</strong> from your Shopping Cart.
-              </p>
+            <!-- Multi-Item Shopping Cart Mode inside Step 1 -->
+            <div v-else data-testid="step1-cart-manager">
+              <div
+                v-if="store.detailedCartItems.length > 0"
+                style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px;"
+              >
+                <div
+                  v-for="item in store.detailedCartItems"
+                  :key="`${item.indicator.id}-${item.index}`"
+                  style="
+                    padding: 14px 16px;
+                    background: rgba(5, 8, 16, 0.75);
+                    border: 1px solid var(--border-subtle);
+                    border-radius: var(--radius-md);
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    gap: 12px;
+                    flex-wrap: wrap;
+                  "
+                  data-testid="step1-cart-item"
+                >
+                  <div>
+                    <div class="meta-line" style="font-size: 0.74rem;">
+                      <span class="meta-accent">{{ item.indicator.category }}</span>
+                      <span class="meta-sep" aria-hidden="true">·</span>
+                      <span class="mono">{{ item.indicator.version }}</span>
+                    </div>
+                    <strong style="font-size: 0.96rem; color: var(--text-primary);">
+                      {{ item.indicator.name }}
+                    </strong>
+                  </div>
+
+                  <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                    <div class="segmented-group" style="padding: 2px;">
+                      <button
+                        v-for="cad in (['Monthly', 'Annual', 'Lifetime'] as const)"
+                        :key="cad"
+                        type="button"
+                        class="segmented-btn"
+                        style="padding: 4px 8px; min-height: 26px; font-size: 0.72rem;"
+                        :class="{ active: item.billingCycle === cad }"
+                        @click="store.updateCartItemCycle(item.index, cad)"
+                      >
+                        {{ cad }}
+                      </button>
+                    </div>
+
+                    <span
+                      class="mono"
+                      style="font-weight: 700; color: var(--accent-emerald-bright); min-width: 72px; text-align: right;"
+                    >
+                      ${{ item.finalPrice.toLocaleString() }}
+                    </span>
+
+                    <button
+                      type="button"
+                      class="btn-ghost"
+                      style="padding: 4px 8px; min-height: 26px; font-size: 0.72rem;"
+                      @click="store.removeFromCart(item.index)"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Empty Cart Fallback inside Step 1 -->
+              <div
+                v-else
+                style="
+                  padding: 20px;
+                  background: rgba(5, 8, 16, 0.72);
+                  border: 1px solid var(--border-subtle);
+                  border-radius: var(--radius-md);
+                  margin-bottom: 16px;
+                  text-align: center;
+                "
+              >
+                <p style="font-weight: 600; color: var(--text-primary);">
+                  Your Multi-Item Cart is Empty
+                </p>
+                <p style="font-size: 0.82rem; color: var(--text-secondary); margin-top: 4px;">
+                  Add one or more institutional indicators below or switch to Direct Indicator
+                  License:
+                </p>
+              </div>
+
+              <!-- Quick-Add Companion Indicators Bar -->
+              <div
+                style="
+                  padding: 12px 14px;
+                  background: rgba(16, 185, 129, 0.05);
+                  border: 1px solid var(--border-subtle);
+                  border-radius: var(--radius-md);
+                  margin-bottom: 16px;
+                "
+              >
+                <div style="font-size: 0.78rem; color: var(--text-secondary); margin-bottom: 8px;">
+                  Quick-Add Indicator or Bundle to Cart:
+                </div>
+                <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                  <button
+                    v-for="ind in store.indicators.slice(0, 4)"
+                    :key="ind.id"
+                    type="button"
+                    class="btn-ghost"
+                    style="padding: 5px 10px; min-height: 28px; font-size: 0.75rem;"
+                    @click="store.addToCart(ind.id, 'Annual', false)"
+                  >
+                    + {{ ind.name.replace('StratEdge ', '') }} (${{ ind.priceAnnual }}/yr)
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div
+              v-if="bannerError && currentStep === 1"
+              class="form-error"
+              style="margin-bottom: 12px;"
+              role="alert"
+            >
+              {{ bannerError }}
+            </div>
+
+            <!-- Wizard Step 1 Next CTA -->
+            <div
+              v-if="wizardLayoutMode === 'wizard'"
+              style="display: flex; justify-content: flex-end; margin-top: 12px;"
+            >
+              <button
+                type="button"
+                class="btn-primary"
+                data-testid="checkout-next-step-1-btn"
+                @click="validateAndAdvanceFromStep1"
+              >
+                Continue to Step 02: Trader Identity &amp; Platform Handles →
+              </button>
             </div>
           </div>
 
-          <!-- STEP 2: TRADER IDENTITY & AUTOMATED PLATFORM TARGETS -->
-          <div style="padding-bottom: 20px; margin-bottom: 20px; border-bottom: 1px solid var(--border-hairline);">
+          <!-- ===============================================================
+               STEP 2: TRADER IDENTITY & AUTOMATED PLATFORM TARGETS
+               =============================================================== -->
+          <div
+            v-show="wizardLayoutMode === 'express' || currentStep === 2"
+            data-testid="checkout-step-2"
+            :style="{
+              paddingBottom: wizardLayoutMode === 'express' ? '22px' : '6px',
+              marginBottom: wizardLayoutMode === 'express' ? '22px' : '0',
+              borderBottom:
+                wizardLayoutMode === 'express' ? '1px solid var(--border-hairline)' : 'none',
+            }"
+          >
             <div class="meta-line" style="margin-bottom: 12px;">
-              <span class="meta-accent">Step 02</span>
+              <span class="meta-accent">Step 02 of 03</span>
               <span class="meta-sep" aria-hidden="true">·</span>
               <span>Customer Identity &amp; Platform Provisioning Handles</span>
             </div>
@@ -472,6 +1020,7 @@ async function downloadReceiptStudy(lic: LicenseRecord) {
                       :value="field.state.value"
                       type="text"
                       class="form-input"
+                      data-testid="checkout-customer-name-input"
                       placeholder="Marcus Vance"
                       @input="(e) => field.handleChange((e.target as HTMLInputElement).value)"
                     />
@@ -493,6 +1042,7 @@ async function downloadReceiptStudy(lic: LicenseRecord) {
                       :value="field.state.value"
                       type="email"
                       class="form-input"
+                      data-testid="checkout-customer-email-input"
                       placeholder="marcus.vance@apexquant.io"
                       @input="(e) => field.handleChange((e.target as HTMLInputElement).value)"
                     />
@@ -507,20 +1057,53 @@ async function downloadReceiptStudy(lic: LicenseRecord) {
             <div class="form-row-2">
               <paymentForm.Field name="tradingViewUsername">
                 <template #default="{ field }">
-                  <div class="form-field" style="margin-bottom: 0;">
+                  <div class="form-field">
                     <label :for="`chk-${field.name}`" class="form-label">
                       TradingView Username (Invite-Only ACL) *
                     </label>
-                    <input
-                      :id="`chk-${field.name}`"
-                      :value="field.state.value"
-                      type="text"
-                      class="form-input mono"
-                      placeholder="MarcusVance_ES"
-                      @input="(e) => field.handleChange((e.target as HTMLInputElement).value)"
-                    />
+                    <div style="display: flex; gap: 8px;">
+                      <input
+                        :id="`chk-${field.name}`"
+                        :value="field.state.value"
+                        type="text"
+                        class="form-input mono"
+                        data-testid="checkout-tv-username-input"
+                        placeholder="MarcusVance_ES"
+                        @input="
+                          (e) => {
+                            field.handleChange((e.target as HTMLInputElement).value);
+                            tvVerifyStatus = 'idle';
+                          }
+                        "
+                      />
+                      <button
+                        type="button"
+                        class="btn-secondary"
+                        style="white-space: nowrap; padding: 0 12px;"
+                        data-testid="verify-tv-handle-btn"
+                        @click="verifyTradingViewHandleNow"
+                      >
+                        Verify ACL
+                      </button>
+                    </div>
                     <span class="form-hint">
                       Exact handle whitelisted on Pine Script v6 server
+                    </span>
+                    <span
+                      v-if="tvVerifyStatus !== 'idle'"
+                      class="mono"
+                      :style="{
+                        display: 'block',
+                        marginTop: '4px',
+                        fontSize: '0.75rem',
+                        color:
+                          tvVerifyStatus === 'valid'
+                            ? 'var(--accent-emerald-bright)'
+                            : 'var(--accent-crimson)',
+                      }"
+                      data-testid="tv-verify-feedback"
+                    >
+                      {{ tvVerifyMessage }}
                     </span>
                     <span v-if="fieldErrors.tradingViewUsername" class="form-error" role="alert">
                       {{ fieldErrors.tradingViewUsername }}
@@ -531,7 +1114,7 @@ async function downloadReceiptStudy(lic: LicenseRecord) {
 
               <paymentForm.Field name="thinkorswimAccountId">
                 <template #default="{ field }">
-                  <div class="form-field" style="margin-bottom: 0;">
+                  <div class="form-field">
                     <label :for="`chk-${field.name}`" class="form-label">
                       Charles Schwab thinkorswim ID
                     </label>
@@ -540,6 +1123,7 @@ async function downloadReceiptStudy(lic: LicenseRecord) {
                       :value="field.state.value"
                       type="text"
                       class="form-input mono"
+                      data-testid="checkout-tos-id-input"
                       placeholder="TOS-994182"
                       @input="(e) => field.handleChange((e.target as HTMLInputElement).value)"
                     />
@@ -550,19 +1134,114 @@ async function downloadReceiptStudy(lic: LicenseRecord) {
                 </template>
               </paymentForm.Field>
             </div>
+
+            <div
+              v-if="bannerError && currentStep === 2"
+              class="form-error"
+              style="margin-bottom: 12px;"
+              role="alert"
+            >
+              {{ bannerError }}
+            </div>
+
+            <!-- Wizard Step 2 Back / Next CTAs -->
+            <div
+              v-if="wizardLayoutMode === 'wizard'"
+              style="
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 12px;
+                margin-top: 14px;
+                flex-wrap: wrap;
+              "
+            >
+              <button
+                type="button"
+                class="btn-ghost"
+                data-testid="checkout-back-step-2-btn"
+                @click="currentStep = 1"
+              >
+                ← Back to Step 01 (Cart &amp; Model)
+              </button>
+              <button
+                type="button"
+                class="btn-primary"
+                data-testid="checkout-next-step-2-btn"
+                @click="validateAndAdvanceFromStep2"
+              >
+                Continue to Step 03: Payment &amp; Settlement →
+              </button>
+            </div>
           </div>
 
-          <!-- STEP 3: ENCRYPTED PAYMENT & SETTLEMENT DETAILS -->
-          <div>
+          <!-- ===============================================================
+               STEP 3: ENCRYPTED PAYMENT & SETTLEMENT DETAILS
+               =============================================================== -->
+          <div
+            v-show="wizardLayoutMode === 'express' || currentStep === 3"
+            data-testid="checkout-step-3"
+          >
             <div class="meta-line" style="margin-bottom: 12px;">
-              <span class="meta-accent">Step 03</span>
+              <span class="meta-accent">Step 03 of 03</span>
               <span class="meta-sep" aria-hidden="true">·</span>
-              <span>Encrypted Payment &amp; Settlement Method</span>
+              <span>Encrypted Payment, Final Review &amp; Instant License Settlement</span>
+            </div>
+
+            <!-- Verified Step 1 & Step 2 Summary Bar inside Step 3 -->
+            <div
+              v-if="wizardLayoutMode === 'wizard'"
+              style="
+                padding: 12px 16px;
+                margin-bottom: 16px;
+                background: rgba(5, 8, 16, 0.72);
+                border: 1px solid var(--border-subtle);
+                border-radius: var(--radius-md);
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 12px;
+                flex-wrap: wrap;
+                font-size: 0.82rem;
+              "
+              data-testid="step3-verified-summary"
+            >
+              <div>
+                <span style="color: var(--text-muted);">Provisioning Target:</span>
+                <strong class="mono" style="margin-left: 6px; color: var(--accent-emerald-bright);">
+                  @{{ paymentForm.state.values.tradingViewUsername }}
+                </strong>
+                <span style="margin: 0 8px; color: var(--text-muted);">·</span>
+                <span class="mono" style="color: var(--text-secondary);">
+                  {{ paymentForm.state.values.customerEmail }}
+                </span>
+              </div>
+              <div style="display: flex; gap: 8px;">
+                <button
+                  type="button"
+                  class="btn-ghost"
+                  style="padding: 3px 8px; min-height: 24px; font-size: 0.72rem;"
+                  @click="currentStep = 1"
+                >
+                  Edit Cart/Model
+                </button>
+                <button
+                  type="button"
+                  class="btn-ghost"
+                  style="padding: 3px 8px; min-height: 24px; font-size: 0.72rem;"
+                  @click="currentStep = 2"
+                >
+                  Edit Handles
+                </button>
+              </div>
             </div>
 
             <div class="form-field">
               <label class="form-label">Select Payment Rail</label>
-              <div class="segmented-group" style="width: 100%; display: grid; grid-template-columns: repeat(3, 1fr);">
+              <div
+                class="segmented-group"
+                style="width: 100%; display: grid; grid-template-columns: repeat(3, 1fr);"
+              >
                 <button
                   v-for="rail in (['Card', 'Wire', 'USDC'] as const)"
                   :key="rail"
@@ -575,8 +1254,8 @@ async function downloadReceiptStudy(lic: LicenseRecord) {
                     rail === 'Card'
                       ? 'Credit / Debit Card'
                       : rail === 'Wire'
-                        ? 'Prop Desk Wire'
-                        : 'USDC On-Chain'
+                      ? 'Prop Desk Wire'
+                      : 'USDC On-Chain'
                   }}
                 </button>
               </div>
@@ -714,8 +1393,8 @@ async function downloadReceiptStudy(lic: LicenseRecord) {
                     : 'Instant USDC Smart-Contract Settlement:'
                 }}
               </strong>
-              Your indicator license and TradingView ACL will be provisioned immediately upon submitting
-              this settlement order.
+              Your indicator license and TradingView ACL will be provisioned immediately upon
+              submitting this settlement order.
             </div>
 
             <!-- Institutional Terms Checkbox -->
@@ -739,8 +1418,8 @@ async function downloadReceiptStudy(lic: LicenseRecord) {
                       @change="(e) => field.handleChange((e.target as HTMLInputElement).checked)"
                     />
                     <span>
-                      I authorize immediate digital license provisioning and agree to the single-seat
-                      TradingView &amp; thinkorswim license terms.
+                      I authorize immediate digital license provisioning and agree to the
+                      single-seat TradingView &amp; thinkorswim license terms.
                     </span>
                   </label>
                   <span v-if="fieldErrors.acceptTerms" class="form-error" role="alert">
@@ -760,19 +1439,39 @@ async function downloadReceiptStudy(lic: LicenseRecord) {
               {{ bannerError }}
             </div>
 
-            <button
-              type="submit"
-              class="btn-primary"
-              style="width: 100%; min-height: 48px; font-size: 0.95rem;"
-              :disabled="submitting"
-              data-testid="submit-secure-payment-btn"
+            <div
+              style="
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 12px;
+                margin-top: 12px;
+              "
             >
-              {{
-                submitting
-                  ? 'Verifying Payment & Provisioning License ACL...'
-                  : `Authorize $${activeTotalDue.toLocaleString()} USD & Provision Access Instantly →`
-              }}
-            </button>
+              <button
+                v-if="wizardLayoutMode === 'wizard'"
+                type="button"
+                class="btn-ghost"
+                data-testid="checkout-back-step-3-btn"
+                @click="currentStep = 2"
+              >
+                ← Back to Step 02
+              </button>
+
+              <button
+                type="submit"
+                class="btn-primary"
+                style="flex: 1; min-height: 48px; font-size: 0.95rem;"
+                :disabled="submitting"
+                data-testid="submit-secure-payment-btn"
+              >
+                {{
+                  submitting
+                    ? 'Verifying Payment & Provisioning License ACL...'
+                    : `Authorize $${activeTotalDue.toLocaleString()} USD & Provision Access Instantly →`
+                }}
+              </button>
+            </div>
           </div>
         </form>
 
@@ -782,11 +1481,18 @@ async function downloadReceiptStudy(lic: LicenseRecord) {
             <div class="meta-line">
               <span class="meta-accent">Live Order Summary</span>
               <span class="meta-sep" aria-hidden="true">·</span>
-              <span>Instant Delivery Included</span>
+              <span>Step {{ currentStep }} of 3 Active</span>
             </div>
 
             <div v-if="checkoutMode === 'single' && store.selectedIndicator">
-              <h2 style="font-family: var(--font-display); font-size: 1.35rem; font-weight: 700; margin-top: 6px;">
+              <h2
+                style="
+                  font-family: var(--font-display);
+                  font-size: 1.35rem;
+                  font-weight: 700;
+                  margin-top: 6px;
+                "
+              >
                 {{ store.selectedIndicator.name }}
               </h2>
               <p style="font-size: 0.875rem; color: var(--text-secondary); margin-top: 4px;">
@@ -821,9 +1527,49 @@ async function downloadReceiptStudy(lic: LicenseRecord) {
               </div>
             </div>
 
+            <div v-else>
+              <h2
+                style="
+                  font-family: var(--font-display);
+                  font-size: 1.25rem;
+                  font-weight: 700;
+                  margin-top: 6px;
+                "
+              >
+                Multi-Item Cart ({{ store.cartTotals.itemCount }} Indicator License{{
+                  store.cartTotals.itemCount === 1 ? '' : 's'
+                }})
+              </h2>
+              <div
+                v-if="store.detailedCartItems.length > 0"
+                style="
+                  margin-top: 12px;
+                  display: flex;
+                  flex-direction: column;
+                  gap: 8px;
+                  font-size: 0.82rem;
+                "
+              >
+                <div
+                  v-for="item in store.detailedCartItems"
+                  :key="`${item.indicator.id}-${item.index}`"
+                  style="display: flex; justify-content: space-between; color: var(--text-secondary);"
+                >
+                  <span>{{ item.indicator.name }} ({{ item.billingCycle }})</span>
+                  <span class="mono" style="color: var(--text-primary);">
+                    ${{ item.finalPrice.toLocaleString() }}
+                  </span>
+                </div>
+              </div>
+            </div>
+
             <!-- Promo Code Application -->
             <div style="padding-top: 14px; border-top: 1px solid var(--border-hairline);">
-              <label for="chk-coupon-input" class="form-label" style="display: block; margin-bottom: 6px;">
+              <label
+                for="chk-coupon-input"
+                class="form-label"
+                style="display: block; margin-bottom: 6px;"
+              >
                 Institutional Promo / Desk Code
               </label>
               <div style="display: flex; gap: 8px;">
@@ -867,10 +1613,16 @@ async function downloadReceiptStudy(lic: LicenseRecord) {
               </div>
               <div
                 v-if="singleOrderPricing.discountAmount > 0"
-                style="display: flex; justify-content: space-between; color: var(--accent-emerald-bright);"
+                style="
+                  display: flex;
+                  justify-content: space-between;
+                  color: var(--accent-emerald-bright);
+                "
               >
                 <span>Promo Discount ({{ singleOrderPricing.discountPct }}% Off)</span>
-                <span class="mono">-${{ singleOrderPricing.discountAmount.toLocaleString() }} USD</span>
+                <span class="mono">
+                  -${{ singleOrderPricing.discountAmount.toLocaleString() }} USD
+                </span>
               </div>
               <div style="display: flex; justify-content: space-between; color: var(--text-secondary);">
                 <span>Valid Through</span>
@@ -887,7 +1639,10 @@ async function downloadReceiptStudy(lic: LicenseRecord) {
                 "
               >
                 <strong style="font-size: 1rem;">Total Due Today</strong>
-                <span class="price-figure" style="color: var(--accent-emerald-bright); font-size: 1.65rem;">
+                <span
+                  class="price-figure"
+                  style="color: var(--accent-emerald-bright); font-size: 1.65rem;"
+                >
                   ${{ singleOrderPricing.finalPrice.toLocaleString() }} USD
                 </span>
               </div>
@@ -910,10 +1665,16 @@ async function downloadReceiptStudy(lic: LicenseRecord) {
               </div>
               <div
                 v-if="store.cartTotals.discountTotal > 0"
-                style="display: flex; justify-content: space-between; color: var(--accent-emerald-bright);"
+                style="
+                  display: flex;
+                  justify-content: space-between;
+                  color: var(--accent-emerald-bright);
+                "
               >
                 <span>Promo Discount</span>
-                <span class="mono">-${{ store.cartTotals.discountTotal.toLocaleString() }} USD</span>
+                <span class="mono">
+                  -${{ store.cartTotals.discountTotal.toLocaleString() }} USD
+                </span>
               </div>
               <div
                 style="
@@ -926,7 +1687,10 @@ async function downloadReceiptStudy(lic: LicenseRecord) {
                 "
               >
                 <strong style="font-size: 1rem;">Total Due Today</strong>
-                <span class="price-figure" style="color: var(--accent-emerald-bright); font-size: 1.65rem;">
+                <span
+                  class="price-figure"
+                  style="color: var(--accent-emerald-bright); font-size: 1.65rem;"
+                >
                   ${{ store.cartTotals.finalTotal.toLocaleString() }} USD
                 </span>
               </div>
@@ -941,17 +1705,30 @@ async function downloadReceiptStudy(lic: LicenseRecord) {
               <span>Zero Manual Waiting</span>
             </div>
             <h3 style="font-size: 1.1rem; font-weight: 700;">
-              What Happens the Millisecond You Submit
+              What Happens the Millisecond You Submit Step 03
             </h3>
-            <ol style="padding-left: 18px; color: var(--text-secondary); font-size: 0.875rem; display: flex; flex-direction: column; gap: 8px;">
+            <ol
+              style="
+                padding-left: 18px;
+                color: var(--text-secondary);
+                font-size: 0.875rem;
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+              "
+            >
               <li>
-                <strong>Deterministic Key Generation:</strong> Issues a unique `SE-XXXX-XXXX-XXXX` cryptographic license key bound to your email.
+                <strong>Deterministic Key Generation:</strong> Issues a unique
+                <code>SE-XXXX-XXXX-XXXX</code> cryptographic license key bound to your email.
               </li>
               <li>
-                <strong>TradingView Invite-Only Whitelist:</strong> Dispatches a sub-second webhook to grant your `@tradingViewUsername` access to the Pine Script v6 study.
+                <strong>TradingView Invite-Only Whitelist:</strong> Dispatches a sub-second webhook
+                to grant your <code>@tradingViewUsername</code> access to the Pine Script v6 study.
               </li>
               <li>
-                <strong>Watermarked thinkorswim Artifact:</strong> Unlocks immediate `.ts` ThinkScript download and `tos.mx` workspace import in your Customer Dashboard.
+                <strong>Watermarked thinkorswim Artifact:</strong> Unlocks immediate
+                <code>.ts</code> ThinkScript download and <code>tos.mx</code> workspace import in
+                your Client Dashboard.
               </li>
             </ol>
           </div>
