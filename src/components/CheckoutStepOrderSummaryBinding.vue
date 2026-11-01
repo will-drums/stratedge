@@ -64,11 +64,14 @@ const singleOrderPricing = computed(() => {
 
 const activeOrderSummary = computed(() => {
   if (props.checkoutMode === 'cart' && store.detailedCartItems.length > 0) {
+    const sub = store.cartTotals.subtotal;
+    const disc = store.cartTotals.discountTotal;
+    const pct = sub > 0 ? Math.round((disc / sub) * 100) : 0;
     return {
       itemCount: store.cartTotals.itemCount,
-      subtotal: store.cartTotals.subtotal,
-      discountPct: store.cartTotals.discountPct,
-      discountTotal: store.cartTotals.discountTotal,
+      subtotal: sub,
+      discountPct: pct,
+      discountTotal: disc,
       finalTotal: store.cartTotals.finalTotal,
       expiresLabel: 'Per-Item Cadence',
     };

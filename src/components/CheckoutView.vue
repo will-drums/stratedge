@@ -14,6 +14,7 @@ import {
 } from '../utils/fulfillment';
 import CheckoutStepIdentityPlatform from './CheckoutStepIdentityPlatform.vue';
 import CheckoutStepOrderSummaryBinding from './CheckoutStepOrderSummaryBinding.vue';
+import CheckoutStepPaymentSettlement from './CheckoutStepPaymentSettlement.vue';
 
 const emit = defineEmits<{
   (e: 'navigate', view: 'storefront' | 'checkout' | 'dashboard' | 'admin'): void;
@@ -38,6 +39,7 @@ const platformPreference = ref<PlatformPreference>('TradingView');
 const couponInput = ref(store.cartCouponCode || 'PROP15');
 const paymentMethod = ref<'Card' | 'Wire' | 'USDC'>('Card');
 const submitting = ref(false);
+const simulationStage = ref('');
 const bannerError = ref('');
 
 // Field-level Zod validation errors
@@ -158,6 +160,11 @@ const paymentForm = useForm({
     }
 
     submitting.value = true;
+    simulationStage.value =
+      'Stage 1/2 · Authorizing encrypted payment gateway & verifying settlement rail...';
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    simulationStage.value =
+      'Stage 2/2 · Minting deterministic SE-XXXX-XXXX-XXXX license key & whitelisting ACL...';
     try {
       if (checkoutMode.value === 'cart' && store.cartItems.length > 0) {
         const res = await fetch('/api/cart/checkout', {
@@ -186,6 +193,7 @@ const paymentForm = useForm({
         store.activeTosAccountId = parsed.data.thinkorswimAccountId || 'TOS-994182';
         store.isAuthenticated = true;
         store.clearCart();
+        checkoutMode.value = 'single';
         await store.fetchAllData();
 
         completedReceipt.value = {
@@ -256,6 +264,7 @@ const paymentForm = useForm({
           : 'Network error during payment settlement';
     } finally {
       submitting.value = false;
+      simulationStage.value = '';
     }
   },
 });
@@ -869,304 +878,85 @@ async function downloadReceiptStudy(lic: LicenseRecord) {
             v-show="wizardLayoutMode === 'express' || currentStep === 3"
             data-testid="checkout-step-3"
           >
-            <div class="meta-line" style="margin-bottom: 12px;">
-              <span class="meta-accent">Step 03 of 03</span>
-              <span class="meta-sep" aria-hidden="true">·</span>
-              <span>Encrypted Payment, Final Review &amp; Instant License Settlement</span>
-            </div>
-
-            <!-- Verified Step 1 & Step 2 Summary Bar inside Step 3 -->
-            <div
-              v-if="wizardLayoutMode === 'wizard'"
-              style="
-                padding: 12px 16px;
-                margin-bottom: 16px;
-                background: rgba(5, 8, 16, 0.72);
-                border: 1px solid var(--border-subtle);
-                border-radius: var(--radius-md);
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                gap: 12px;
-                flex-wrap: wrap;
-                font-size: 0.82rem;
-              "
-              data-testid="step3-verified-summary"
-            >
-              <div>
-                <span style="color: var(--text-muted);">Platform Preference:</span>
-                <strong class="mono" style="margin-left: 6px; color: var(--accent-emerald-bright);">
-                  {{ platformPreference }}
-                </strong>
-                <span style="margin: 0 8px; color: var(--text-muted);">·</span>
-                <span class="mono" style="color: var(--text-primary);">
-                  {{
-                    platformPreference === 'thinkorswim'
-                      ? paymentForm.state.values.thinkorswimAccountId
-                      : `@${paymentForm.state.values.tradingViewUsername}`
-                  }}
-                </span>
-                <span style="margin: 0 8px; color: var(--text-muted);">·</span>
-                <span class="mono" style="color: var(--text-secondary);">
-                  {{ paymentForm.state.values.customerEmail }}
-                </span>
-              </div>
-              <div style="display: flex; gap: 8px;">
-                <button
-                  type="button"
-                  class="btn-ghost"
-                  style="padding: 3px 8px; min-height: 24px; font-size: 0.72rem;"
-                  @click="currentStep = 1"
-                >
-                  Edit Identity &amp; Platform
-                </button>
-                <button
-                  type="button"
-                  class="btn-ghost"
-                  style="padding: 3px 8px; min-height: 24px; font-size: 0.72rem;"
-                  @click="currentStep = 2"
-                >
-                  Edit Cart/Model
-                </button>
-              </div>
-            </div>
-
-            <div class="form-field">
-              <label class="form-label">Select Payment Rail</label>
-              <div
-                class="segmented-group"
-                style="width: 100%; display: grid; grid-template-columns: repeat(3, 1fr);"
-              >
-                <button
-                  v-for="rail in (['Card', 'Wire', 'USDC'] as const)"
-                  :key="rail"
-                  type="button"
-                  class="segmented-btn"
-                  :class="{ active: paymentMethod === rail }"
-                  @click="paymentMethod = rail"
-                >
-                  {{
-                    rail === 'Card'
-                      ? 'Credit / Debit Card'
-                      : rail === 'Wire'
-                      ? 'Prop Desk Wire'
-                      : 'USDC On-Chain'
-                  }}
-                </button>
-              </div>
-            </div>
-
-            <!-- Credit / Debit Card Inputs (Zod Validated) -->
-            <div v-if="paymentMethod === 'Card'">
-              <div class="form-row-2">
-                <paymentForm.Field name="cardholderName">
-                  <template #default="{ field }">
-                    <div class="form-field">
-                      <label :for="`chk-${field.name}`" class="form-label">
-                        Name on Card *
-                      </label>
-                      <input
-                        :id="`chk-${field.name}`"
-                        :value="field.state.value"
-                        type="text"
-                        class="form-input"
-                        placeholder="Marcus Vance"
-                        @input="(e) => field.handleChange((e.target as HTMLInputElement).value)"
-                      />
-                      <span v-if="fieldErrors.cardholderName" class="form-error" role="alert">
-                        {{ fieldErrors.cardholderName }}
-                      </span>
-                    </div>
+            <paymentForm.Field name="customerName">
+              <template #default="{ field: nameField }">
+                <paymentForm.Field name="customerEmail">
+                  <template #default="{ field: emailField }">
+                    <paymentForm.Field name="tradingViewUsername">
+                      <template #default="{ field: tvField }">
+                        <paymentForm.Field name="thinkorswimAccountId">
+                          <template #default="{ field: tosField }">
+                            <paymentForm.Field name="cardholderName">
+                              <template #default="{ field: holderField }">
+                                <paymentForm.Field name="cardNumber">
+                                  <template #default="{ field: numField }">
+                                    <paymentForm.Field name="cardExpiry">
+                                      <template #default="{ field: expField }">
+                                        <paymentForm.Field name="cardCvc">
+                                          <template #default="{ field: cvcField }">
+                                            <paymentForm.Field name="billingZip">
+                                              <template #default="{ field: zipField }">
+                                                <paymentForm.Field name="acceptTerms">
+                                                  <template #default="{ field: termsField }">
+                                                    <CheckoutStepPaymentSettlement
+                                                      :checkout-mode="checkoutMode"
+                                                      :platform-preference="platformPreference"
+                                                      :customer-name="nameField.state.value"
+                                                      :customer-email="emailField.state.value"
+                                                      :trading-view-username="tvField.state.value"
+                                                      :thinkorswim-account-id="tosField.state.value"
+                                                      :coupon-code="couponInput"
+                                                      :payment-method="paymentMethod"
+                                                      :cardholder-name="holderField.state.value"
+                                                      :card-number="numField.state.value"
+                                                      :card-expiry="expField.state.value"
+                                                      :card-cvc="cvcField.state.value"
+                                                      :billing-zip="zipField.state.value"
+                                                      :accept-terms="termsField.state.value"
+                                                      :submitting="submitting"
+                                                      :simulation-stage="simulationStage"
+                                                      :completed-receipt="completedReceipt"
+                                                      :field-errors="fieldErrors"
+                                                      :banner-error="currentStep === 3 ? bannerError : ''"
+                                                      :wizard-layout-mode="wizardLayoutMode"
+                                                      @update:payment-method="(v) => (paymentMethod = v)"
+                                                      @update:cardholder-name="(v) => holderField.handleChange(v)"
+                                                      @update:card-number="(v) => numField.handleChange(v)"
+                                                      @update:card-expiry="(v) => expField.handleChange(v)"
+                                                      @update:card-cvc="(v) => cvcField.handleChange(v)"
+                                                      @update:billing-zip="(v) => zipField.handleChange(v)"
+                                                      @update:accept-terms="(v) => termsField.handleChange(v)"
+                                                      @edit-step-1="currentStep = 1"
+                                                      @edit-step-2="currentStep = 2"
+                                                      @back="currentStep = 2"
+                                                      @confirm-payment="paymentForm.handleSubmit()"
+                                                      @download-study="downloadReceiptStudy"
+                                                      @open-dashboard="emit('navigate', 'dashboard')"
+                                                      @reset-order="
+                                                        completedReceipt = null;
+                                                        currentStep = 1;
+                                                      "
+                                                    />
+                                                  </template>
+                                                </paymentForm.Field>
+                                              </template>
+                                            </paymentForm.Field>
+                                          </template>
+                                        </paymentForm.Field>
+                                      </template>
+                                    </paymentForm.Field>
+                                  </template>
+                                </paymentForm.Field>
+                              </template>
+                            </paymentForm.Field>
+                          </template>
+                        </paymentForm.Field>
+                      </template>
+                    </paymentForm.Field>
                   </template>
                 </paymentForm.Field>
-
-                <paymentForm.Field name="cardNumber">
-                  <template #default="{ field }">
-                    <div class="form-field">
-                      <label :for="`chk-${field.name}`" class="form-label">
-                        Card Number *
-                      </label>
-                      <input
-                        :id="`chk-${field.name}`"
-                        :value="field.state.value"
-                        type="text"
-                        class="form-input mono"
-                        placeholder="4242 4242 4242 4242"
-                        @input="(e) => field.handleChange((e.target as HTMLInputElement).value)"
-                      />
-                      <span v-if="fieldErrors.cardNumber" class="form-error" role="alert">
-                        {{ fieldErrors.cardNumber }}
-                      </span>
-                    </div>
-                  </template>
-                </paymentForm.Field>
-              </div>
-
-              <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
-                <paymentForm.Field name="cardExpiry">
-                  <template #default="{ field }">
-                    <div class="form-field">
-                      <label :for="`chk-${field.name}`" class="form-label">
-                        Expiry (MM/YY) *
-                      </label>
-                      <input
-                        :id="`chk-${field.name}`"
-                        :value="field.state.value"
-                        type="text"
-                        class="form-input mono"
-                        placeholder="08/29"
-                        @input="(e) => field.handleChange((e.target as HTMLInputElement).value)"
-                      />
-                      <span v-if="fieldErrors.cardExpiry" class="form-error" role="alert">
-                        {{ fieldErrors.cardExpiry }}
-                      </span>
-                    </div>
-                  </template>
-                </paymentForm.Field>
-
-                <paymentForm.Field name="cardCvc">
-                  <template #default="{ field }">
-                    <div class="form-field">
-                      <label :for="`chk-${field.name}`" class="form-label">
-                        Security CVC *
-                      </label>
-                      <input
-                        :id="`chk-${field.name}`"
-                        :value="field.state.value"
-                        type="text"
-                        class="form-input mono"
-                        placeholder="842"
-                        @input="(e) => field.handleChange((e.target as HTMLInputElement).value)"
-                      />
-                      <span v-if="fieldErrors.cardCvc" class="form-error" role="alert">
-                        {{ fieldErrors.cardCvc }}
-                      </span>
-                    </div>
-                  </template>
-                </paymentForm.Field>
-
-                <paymentForm.Field name="billingZip">
-                  <template #default="{ field }">
-                    <div class="form-field">
-                      <label :for="`chk-${field.name}`" class="form-label">
-                        Billing ZIP / Postal *
-                      </label>
-                      <input
-                        :id="`chk-${field.name}`"
-                        :value="field.state.value"
-                        type="text"
-                        class="form-input mono"
-                        placeholder="10005"
-                        @input="(e) => field.handleChange((e.target as HTMLInputElement).value)"
-                      />
-                      <span v-if="fieldErrors.billingZip" class="form-error" role="alert">
-                        {{ fieldErrors.billingZip }}
-                      </span>
-                    </div>
-                  </template>
-                </paymentForm.Field>
-              </div>
-            </div>
-
-            <!-- Desk Wire or USDC Instructions -->
-            <div
-              v-else
-              style="
-                padding: 14px;
-                margin-bottom: 16px;
-                background: rgba(5, 8, 16, 0.7);
-                border: 1px solid var(--border-hairline);
-                border-radius: var(--radius-inner);
-                font-size: 0.85rem;
-                color: var(--text-secondary);
-              "
-            >
-              <strong style="color: var(--accent-emerald-bright);">
-                {{
-                  paymentMethod === 'Wire'
-                    ? 'Instant Prop-Desk Clearing Authorization:'
-                    : 'Instant USDC Smart-Contract Settlement:'
-                }}
-              </strong>
-              Your indicator license and TradingView ACL will be provisioned immediately upon
-              submitting this settlement order.
-            </div>
-
-            <!-- Institutional Terms Checkbox -->
-            <paymentForm.Field name="acceptTerms">
-              <template #default="{ field }">
-                <div class="form-field" style="margin-top: 6px;">
-                  <label
-                    style="
-                      display: flex;
-                      align-items: center;
-                      gap: 10px;
-                      font-size: 0.85rem;
-                      color: var(--text-secondary);
-                      cursor: pointer;
-                    "
-                  >
-                    <input
-                      type="checkbox"
-                      :checked="field.state.value"
-                      style="width: 16px; height: 16px; accent-color: var(--accent-emerald);"
-                      @change="(e) => field.handleChange((e.target as HTMLInputElement).checked)"
-                    />
-                    <span>
-                      I authorize immediate digital license provisioning and agree to the
-                      single-seat TradingView &amp; thinkorswim license terms.
-                    </span>
-                  </label>
-                  <span v-if="fieldErrors.acceptTerms" class="form-error" role="alert">
-                    {{ fieldErrors.acceptTerms }}
-                  </span>
-                </div>
               </template>
             </paymentForm.Field>
-
-            <div
-              v-if="bannerError"
-              class="form-error"
-              style="margin-bottom: 14px; font-size: 0.85rem;"
-              role="alert"
-              data-testid="checkout-validation-error"
-            >
-              {{ bannerError }}
-            </div>
-
-            <div
-              style="
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                gap: 12px;
-                margin-top: 12px;
-              "
-            >
-              <button
-                v-if="wizardLayoutMode === 'wizard'"
-                type="button"
-                class="btn-ghost"
-                data-testid="checkout-back-step-3-btn"
-                @click="currentStep = 2"
-              >
-                ← Back to Step 02
-              </button>
-
-              <button
-                type="submit"
-                class="btn-primary"
-                style="flex: 1; min-height: 48px; font-size: 0.95rem;"
-                :disabled="submitting"
-                data-testid="submit-secure-payment-btn"
-              >
-                {{
-                  submitting
-                    ? 'Verifying Payment & Provisioning License ACL...'
-                    : `Authorize $${activeTotalDue.toLocaleString()} USD & Provision Access Instantly →`
-                }}
-              </button>
-            </div>
           </div>
         </form>
 

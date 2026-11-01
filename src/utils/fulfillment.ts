@@ -231,6 +231,125 @@ export const CheckoutStep3Schema = z.object({
     }),
 });
 
+export const CheckoutPaymentSettlementStepSchema = z
+  .object({
+    paymentMethod: z.enum(['Card', 'Wire', 'USDC']).default('Card'),
+    cardholderName: z.string().trim().optional().default(''),
+    cardNumber: z.string().trim().optional().default(''),
+    cardExpiry: z.string().trim().optional().default(''),
+    cardCvc: z.string().trim().optional().default(''),
+    billingZip: z
+      .string()
+      .trim()
+      .min(3, 'Billing postal / ZIP code is required'),
+    acceptTerms: z
+      .boolean()
+      .refine((val) => val === true, {
+        message: 'You must accept the institutional license & non-redistribution terms',
+      }),
+  })
+  .superRefine((data, ctx) => {
+    if (data.paymentMethod === 'Card') {
+      if (data.cardholderName.trim().length < 2) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['cardholderName'],
+          message: 'Cardholder name is required (min 2 characters)',
+        });
+      }
+      const digits = data.cardNumber.replace(/[\s-]/g, '');
+      if (!/^\d{12,19}$/.test(digits)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['cardNumber'],
+          message: 'Enter a valid 12 to 19 digit card number',
+        });
+      }
+      if (!/^(0[1-9]|1[0-2])\/\d{2}$/.test(data.cardExpiry.trim())) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['cardExpiry'],
+          message: 'Expiration must be in MM/YY format (e.g. 08/29)',
+        });
+      }
+      if (!/^\d{3,4}$/.test(data.cardCvc.trim())) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['cardCvc'],
+          message: 'Security CVC must be 3 or 4 digits',
+        });
+      }
+    }
+  });
+
+export interface OrderConfirmationSummary {
+  orderId: string;
+  licenseKey: string;
+  customerName: string;
+  customerEmail: string;
+  platformPreference: PlatformPreference;
+  boundHandleLabel: string;
+  indicatorName: string;
+  billingCycle: 'Monthly' | 'Annual' | 'Lifetime';
+  subtotal: number;
+  discountAmount: number;
+  totalPaid: number;
+  paymentMethod: 'Card' | 'Wire' | 'USDC';
+}
+
+export function buildOrderConfirmationSummary(input: {
+  orderId: string;
+  indicatorId: string;
+  indicatorName: string;
+  customerName: string;
+  customerEmail: string;
+  platformPreference: PlatformPreference;
+  tradingViewUsername: string;
+  thinkorswimAccountId: string;
+  billingCycle: 'Monthly' | 'Annual' | 'Lifetime';
+  subtotal: number;
+  discountAmount: number;
+  totalPaid: number;
+  paymentMethod: 'Card' | 'Wire' | 'USDC';
+  entropySuffix?: string;
+}): OrderConfirmationSummary {
+  const suffix =
+    input.entropySuffix ||
+    (input.tradingViewUsername || input.thinkorswimAccountId || 'DESK')
+      .replace(/[^a-zA-Z0-9]/g, '')
+      .toUpperCase()
+      .slice(-4)
+      .padStart(4, '9');
+  const licenseKey = generateDeterministicLicenseKey(
+    input.indicatorId,
+    input.customerEmail,
+    suffix
+  );
+
+  let boundHandleLabel = `@${input.tradingViewUsername.trim()}`;
+  if (input.platformPreference === 'thinkorswim') {
+    boundHandleLabel = input.thinkorswimAccountId.trim();
+  } else if (input.platformPreference === 'Dual') {
+    boundHandleLabel = `@${input.tradingViewUsername.trim()} + ${input.thinkorswimAccountId.trim()}`;
+  }
+
+  return {
+    orderId: input.orderId,
+    licenseKey,
+    customerName: input.customerName.trim(),
+    customerEmail: input.customerEmail.trim().toLowerCase(),
+    platformPreference: input.platformPreference,
+    boundHandleLabel,
+    indicatorName: input.indicatorName,
+    billingCycle: input.billingCycle,
+    subtotal: input.subtotal,
+    discountAmount: input.discountAmount,
+    totalPaid: input.totalPaid,
+    paymentMethod: input.paymentMethod,
+  };
+}
+
+
 export interface PricingBreakdown {
   basePrice: number;
   discountPct: number;

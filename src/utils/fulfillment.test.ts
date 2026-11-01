@@ -5,12 +5,14 @@ import {
   SecureCheckoutPaymentSchema,
   CheckoutIdentityPlatformStepSchema,
   CheckoutOrderSummaryBindingStepSchema,
+  CheckoutPaymentSettlementStepSchema,
   CheckoutStep1Schema,
   CheckoutStep2Schema,
   CheckoutStep3Schema,
   TradingViewUsernameSchema,
   calculateOrderPricing,
   generateDeterministicLicenseKey,
+  buildOrderConfirmationSummary,
   generateThinkScriptArtifact,
   buildDailyRevenueGrowthSeries,
   computeCustomerLicenseDistribution,
@@ -292,4 +294,59 @@ test('CheckoutOrderSummaryBindingStepSchema validates order summary, license key
   });
   assert.equal(validTosBinding.success, true);
 });
+
+test('CheckoutPaymentSettlementStepSchema and buildOrderConfirmationSummary validate payment rails and generate license confirmation', () => {
+  const validCard = CheckoutPaymentSettlementStepSchema.safeParse({
+    paymentMethod: 'Card',
+    cardholderName: 'Marcus Vance',
+    cardNumber: '4242 4242 4242 4242',
+    cardExpiry: '08/29',
+    cardCvc: '842',
+    billingZip: '10005',
+    acceptTerms: true,
+  });
+  assert.equal(validCard.success, true);
+
+  const validUsdcWithoutCard = CheckoutPaymentSettlementStepSchema.safeParse({
+    paymentMethod: 'USDC',
+    cardholderName: '',
+    cardNumber: '',
+    cardExpiry: '',
+    cardCvc: '',
+    billingZip: '10005',
+    acceptTerms: true,
+  });
+  assert.equal(validUsdcWithoutCard.success, true);
+
+  const invalidCardCvc = CheckoutPaymentSettlementStepSchema.safeParse({
+    paymentMethod: 'Card',
+    cardholderName: 'Marcus Vance',
+    cardNumber: '4242 4242 4242 4242',
+    cardExpiry: '08/29',
+    cardCvc: '1',
+    billingZip: '10005',
+    acceptTerms: true,
+  });
+  assert.equal(invalidCardCvc.success, false);
+
+  const summary = buildOrderConfirmationSummary({
+    orderId: 'ORD-884920',
+    indicatorId: 'se-algo-gamma',
+    indicatorName: 'StratEdge Algo Gamma',
+    customerName: 'Marcus Vance',
+    customerEmail: 'marcus.vance@apexquant.io',
+    platformPreference: 'TradingView',
+    tradingViewUsername: 'MarcusVance_ES',
+    thinkorswimAccountId: 'TOS-994182',
+    billingCycle: 'Annual',
+    subtotal: 1490,
+    discountAmount: 223.5,
+    totalPaid: 1266.5,
+    paymentMethod: 'Card',
+  });
+  assert.match(summary.licenseKey, /^SE-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/);
+  assert.equal(summary.boundHandleLabel, '@MarcusVance_ES');
+  assert.equal(summary.totalPaid, 1266.5);
+});
+
 
