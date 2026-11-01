@@ -1080,8 +1080,196 @@ button {
   color: var(--text-primary);
 }
 
-/* Responsive Breakpoints */
-@media (max-width: 1024px) {
+/* ==========================================================================
+   ENTERPRISE RESPONSIVE COMPONENT CLASSES & GRID SAFEGUARDS (NOV 2026 SPEC)
+   ========================================================================== */
+.hero-grid > *,
+.bento-grid > *,
+.checkout-grid > *,
+.catalog-grid > *,
+.proof-grid > *,
+.pricing-tiers-grid > *,
+.trinity-spotlight-grid > *,
+.license-panel > *,
+.form-row-2 > *,
+.kpi-strip > * {
+  min-width: 0;
+}
+
+.announcement-bar {
+  background: linear-gradient(90deg, rgba(16, 185, 129, 0.14), rgba(56, 189, 248, 0.12));
+  border-bottom: 1px solid rgba(16, 185, 129, 0.28);
+  padding: 8px 24px;
+}
+
+.hero-telemetry-footer {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-hairline);
+}
+
+.checkout-stepper-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  align-items: stretch;
+}
+
+.platform-pref-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.card-security-grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.guides-grid-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.dashboard-session-switcher {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  max-width: 410px;
+}
+
+.cart-drawer-panel {
+  width: 100%;
+  max-width: 560px;
+  height: 100vh;
+  height: 100dvh;
+  overflow-y: auto;
+  background: var(--bg-surface);
+  border-left: 1px solid var(--border-hairline);
+  padding: 28px 24px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.cart-drawer-stepper-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 16px;
+  margin-bottom: 16px;
+}
+
+.admin-filter-control {
+  min-height: 34px;
+  padding: 4px 10px;
+  font-size: 0.78rem;
+  width: auto;
+  min-width: 142px;
+}
+
+.admin-sales-search-wrap {
+  width: 260px;
+  max-width: 100%;
+}
+
+.mobile-menu-toggle {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 12px;
+  min-height: 38px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-hairline);
+  background: rgba(17, 27, 46, 0.72);
+  color: var(--text-primary);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.mobile-nav-drawer {
+  display: none;
+}
+
+/* Breakpoint Tier: 2XL Ultra-Wide Institutional Trading Desk (>= 1536px) */
+@media (min-width: 1536px) {
+  :root {
+    --container-max: 1440px;
+  }
+
+  .hero-grid {
+    gap: 52px;
+  }
+}
+
+/* Breakpoint Tier: LG Compact Laptop / Split-Screen Terminal (<= 1279px) */
+@media (max-width: 1279px) {
+  .topbar-inner {
+    gap: 20px;
+    padding: 12px 20px;
+  }
+
+  .topbar-nav {
+    gap: 18px;
+  }
+
+  .hero-grid {
+    gap: 28px;
+  }
+
+  .catalog-grid,
+  .pricing-tiers-grid,
+  .trinity-spotlight-grid {
+    gap: 18px;
+  }
+
+  .license-panel {
+    grid-template-columns: 1.1fr 1fr 0.9fr;
+    gap: 18px;
+    padding: 20px;
+  }
+}
+
+/* Breakpoint Tier: MD Tablet Landscape & Portrait (<= 1023px) */
+@media (max-width: 1023px) {
+  .topbar-inner {
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 12px 20px;
+  }
+
+  .topbar-nav {
+    order: 3;
+    width: 100%;
+    overflow-x: auto;
+    padding-top: 8px;
+    padding-bottom: 4px;
+    border-top: 1px solid rgba(148, 163, 184, 0.12);
+    gap: 20px;
+    scrollbar-width: thin;
+  }
+
+  .mobile-menu-toggle {
+    display: inline-flex;
+  }
+
+  .mobile-nav-drawer.open {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    width: 100%;
+    order: 4;
+    padding: 12px 14px;
+    background: rgba(11, 17, 30, 0.96);
+    border: 1px solid var(--border-hairline);
+    border-radius: var(--radius-inner);
+  }
+
   .hero-grid,
   .bento-grid,
   .checkout-grid,
@@ -1090,39 +1278,215 @@ button {
     grid-template-columns: 1fr;
   }
 
+  .guides-grid-2 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .catalog-grid,
   .proof-grid,
   .pricing-tiers-grid {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .kpi-strip {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 20px;
+    padding: 22px;
   }
 
   .kpi-item {
     border-right: none;
     padding-right: 0;
   }
+
+  .dashboard-session-switcher {
+    max-width: 100%;
+  }
 }
 
-@media (max-width: 680px) {
-  .topbar-inner {
-    gap: 12px;
+/* Breakpoint Tier: SM Large Mobile / Phablet / Foldable (<= 767px) */
+@media (max-width: 767px) {
+  .container {
+    padding: 0 16px;
+  }
+
+  .announcement-bar {
+    padding: 8px 16px;
+  }
+
+  .notification-bar {
     padding: 10px 16px;
   }
 
-  .topbar-nav {
-    gap: 14px;
-    overflow-x: auto;
+  .notification-inner {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .hero-section {
+    padding: 36px 0 28px;
+  }
+
+  .section-block {
+    padding: 48px 0;
+  }
+
+  .workspace-shell {
+    padding: 24px 0 48px;
+  }
+
+  .bento-panel,
+  .form-panel,
+  .indicator-card,
+  .trinity-pillar-card,
+  .pricing-tier-card,
+  .testimonial-card,
+  .license-panel {
+    padding: 18px 16px;
   }
 
   .catalog-grid,
   .proof-grid,
   .pricing-tiers-grid,
+  .guides-grid-2,
   .kpi-strip,
   .form-row-2,
-  .terminal-footer {
+  .terminal-footer,
+  .hero-telemetry-footer,
+  .checkout-stepper-grid,
+  .platform-pref-cards-grid,
+  .card-security-grid-3 {
     grid-template-columns: 1fr;
   }
+
+  .quant-3d-shell {
+    padding: 14px;
+  }
+
+  .quant-3d-viewport-wrapper {
+    height: 310px;
+  }
+
+  .quant-3d-bottom-dock {
+    width: calc(100% - 16px);
+    max-width: calc(100% - 16px);
+  }
+
+  .dock-controls-inner {
+    flex-wrap: wrap;
+    width: 100%;
+  }
+
+  .segmented-group {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  .admin-filter-control,
+  .admin-sales-search-wrap {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .modal-backdrop {
+    padding: 12px;
+  }
+
+  .modal-card {
+    padding: 20px 16px;
+    max-height: 94vh;
+  }
+
+  .cart-drawer-panel {
+    max-width: 100%;
+    padding: 20px 16px;
+  }
 }
+
+/* Breakpoint Tier: XS Compact Smartphone (<= 480px) */
+@media (max-width: 480px) {
+  .topbar-inner {
+    padding: 10px 14px;
+    gap: 10px;
+  }
+
+  .brand-wordmark {
+    font-size: 1.1rem;
+  }
+
+  .topbar-actions {
+    gap: 6px !important;
+    flex-wrap: wrap;
+  }
+
+  .topbar-actions .btn-ghost,
+  .topbar-actions .btn-primary {
+    padding: 7px 10px;
+    min-height: 36px;
+    font-size: 0.75rem;
+  }
+
+  .topbar-nav {
+    gap: 14px;
+  }
+
+  .topbar-link {
+    font-size: 0.82rem;
+  }
+
+  .hero-headline {
+    font-size: clamp(1.75rem, 7vw, 2.25rem);
+  }
+
+  .hero-cta-row .btn-primary,
+  .hero-cta-row .btn-secondary,
+  .hero-cta-row .btn-ghost {
+    width: 100%;
+  }
+
+  .card-metrics-row {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .card-price-footer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .quant-3d-viewport-wrapper {
+    height: 276px;
+  }
+
+  .cart-drawer-stepper-grid {
+    grid-template-columns: 1fr;
+  }
+
+  code,
+  .mono {
+    overflow-wrap: anywhere;
+  }
+}
+
+/* Breakpoint Tier: Ultra-Compact Handset (<= 380px) */
+@media (max-width: 380px) {
+  .container {
+    padding: 0 12px;
+  }
+
+  .bento-panel,
+  .form-panel,
+  .indicator-card,
+  .trinity-pillar-card,
+  .pricing-tier-card {
+    padding: 14px 12px;
+  }
+
+  .btn-primary,
+  .btn-secondary,
+  .btn-ghost {
+    white-space: normal;
+    text-align: center;
+  }
+}
+

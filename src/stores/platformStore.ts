@@ -2,7 +2,10 @@ import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 import {
   calculateOrderPricing,
+  buildDefaultTicketMessages,
   type SupportTicketRecord,
+  type SupportTicketInput,
+  type SupportTicketMessageInput,
 } from '../utils/fulfillment';
 
 export interface IndicatorItem {
@@ -145,64 +148,107 @@ export const usePlatformStore = defineStore('platform', () => {
   const allLicenses = ref<LicenseRecord[]>([]);
   const allUsers = ref<UserProfile[]>([]);
   const webhookLogs = ref<WebhookLogItem[]>([]);
-  const supportTickets = ref<SupportTicketRecord[]>([
-    {
-      id: 'tkt-9041',
-      ticketNumber: 'TKT-9041',
-      customerName: 'Marcus Vance',
-      customerEmail: 'marcus.vance@apexquant.io',
-      tradingViewUsername: 'MarcusVance_ES',
-      platformTarget: 'TradingView',
-      category: 'TradingView ACL Sync',
-      priority: 'Critical',
-      status: 'Open',
-      subject: 'Sub-account Pine v6 Invite-Only ACL whitelist propagation for NQ desk terminal',
-      description:
-        'Upgraded to Full Institutional Bundle for our primary CME ES/NQ desk. Requesting immediate Invite-Only ACL sync verification on backup chart handle @MarcusVance_ES.',
-      licenseKey: 'SE-BUND-8841-A9C2',
-      adminResolutionNote:
-        'Awaiting automated TradingView Pine v6 ACL verification ping on primary & backup desk handles.',
-      createdAt: '2026-10-31 14:12:00 UTC',
-      updatedAt: '2026-10-31 14:12:00 UTC',
-    },
-    {
-      id: 'tkt-9038',
-      ticketNumber: 'TKT-9038',
-      customerName: 'Elena Rostova',
-      customerEmail: 'elena.rostova@zurichprop.ch',
-      tradingViewUsername: 'Elena_ZurichQuant',
-      platformTarget: 'thinkorswim',
-      category: 'thinkorswim Study Import',
-      priority: 'High',
-      status: 'In Progress',
-      subject: 'Charles Schwab thinkorswim v5.4 Gamma Exposure .ts study aggregation alert',
-      description:
-        'Imported StratEdge_Gamma_v5_4.ts into Schwab thinkorswim desktop on 2-minute /ES chart. Need confirmation on recommended secondary aggregation period for 0DTE dealer gamma flip zones.',
-      licenseKey: 'SE-GAMM-7721-B4E9',
-      adminResolutionNote:
-        'Assigned to Senior Quant Engineer: Provided 15-min secondary aggregation parameter preset for 0DTE SPX/ES.',
-      createdAt: '2026-10-30 19:45:00 UTC',
-      updatedAt: '2026-10-31 09:20:00 UTC',
-    },
-    {
-      id: 'tkt-9034',
-      ticketNumber: 'TKT-9034',
-      customerName: 'David Chen',
-      customerEmail: 'david.chen@pacificcap.com',
-      tradingViewUsername: 'DChen_SwingMacro',
-      platformTarget: 'Dual-Platform',
-      category: 'License Key Re-binding',
-      priority: 'Normal',
-      status: 'Open',
-      subject: 'Re-bind thinkorswim account ID after Charles Schwab institutional migration',
-      description:
-        'Our Pacific Cap macro desk migrated TD Ameritrade accounts to Charles Schwab Institutional ID TOS-552901. Please update watermark binding on our Liquidity Matrix license.',
-      licenseKey: 'SE-LIQM-5529-C1D8',
-      adminResolutionNote: '',
-      createdAt: '2026-10-29 16:08:00 UTC',
-      updatedAt: '2026-10-29 16:08:00 UTC',
-    },
-  ]);
+  const supportTickets = ref<SupportTicketRecord[]>(
+    [
+      {
+        id: 'tkt-9041',
+        ticketNumber: 'TKT-9041',
+        customerName: 'Marcus Vance',
+        customerEmail: 'marcus.vance@apexquant.io',
+        tradingViewUsername: 'MarcusVance_ES',
+        platformTarget: 'TradingView' as const,
+        category: 'TradingView ACL Sync' as const,
+        priority: 'Critical' as const,
+        status: 'Open' as const,
+        subject: 'Sub-account Pine v6 Invite-Only ACL whitelist propagation for NQ desk terminal',
+        description:
+          'Upgraded to Full Institutional Bundle for our primary CME ES/NQ desk. Requesting immediate Invite-Only ACL sync verification on backup chart handle @MarcusVance_ES.',
+        licenseKey: 'SE-BUND-8841-A9C2',
+        adminResolutionNote:
+          'Awaiting automated TradingView Pine v6 ACL verification ping on primary & backup desk handles.',
+        createdAt: '2026-10-31 14:12:00 UTC',
+        updatedAt: '2026-10-31 14:18:00 UTC',
+      },
+      {
+        id: 'tkt-9039',
+        ticketNumber: 'TKT-9039',
+        customerName: 'Marcus Vance',
+        customerEmail: 'marcus.vance@apexquant.io',
+        tradingViewUsername: 'MarcusVance_ES',
+        platformTarget: 'thinkorswim' as const,
+        category: 'thinkorswim Study Import' as const,
+        priority: 'High' as const,
+        status: 'In Progress' as const,
+        subject: 'thinkorswim Desktop v5.4 Cumulative Volume Delta lower study memory buffer tuning',
+        description:
+          'Running StratEdge_Algo_Flow_v54.ts across 6 linked CME /ES and /NQ charts on Charles Schwab thinkorswim Desktop. Seeking recommended max-bars lookback parameter to minimize JVM heap usage during RTH open.',
+        licenseKey: 'SE-FLOW-4419-D8A1',
+        adminResolutionNote:
+          'Senior Quant Engineer Dr. Julian Vance: Set input institutionalLookbackBars = 1440 on 1-minute RTH charts to cap JVM heap allocation under 420MB while preserving full session CVD anchor parity.',
+        createdAt: '2026-10-30 21:05:00 UTC',
+        updatedAt: '2026-10-31 10:42:00 UTC',
+      },
+      {
+        id: 'tkt-9038',
+        ticketNumber: 'TKT-9038',
+        customerName: 'Elena Rostova',
+        customerEmail: 'elena.rostova@zurichprop.ch',
+        tradingViewUsername: 'Elena_ZurichQuant',
+        platformTarget: 'thinkorswim' as const,
+        category: 'thinkorswim Study Import' as const,
+        priority: 'High' as const,
+        status: 'In Progress' as const,
+        subject: 'Charles Schwab thinkorswim v5.4 Gamma Exposure .ts study aggregation alert',
+        description:
+          'Imported StratEdge_Gamma_v5_4.ts into Schwab thinkorswim desktop on 2-minute /ES chart. Need confirmation on recommended secondary aggregation period for 0DTE dealer gamma flip zones.',
+        licenseKey: 'SE-GAMM-7721-B4E9',
+        adminResolutionNote:
+          'Assigned to Senior Quant Engineer: Provided 15-min secondary aggregation parameter preset for 0DTE SPX/ES.',
+        createdAt: '2026-10-30 19:45:00 UTC',
+        updatedAt: '2026-10-31 09:20:00 UTC',
+      },
+      {
+        id: 'tkt-9035',
+        ticketNumber: 'TKT-9035',
+        customerName: 'Marcus Vance',
+        customerEmail: 'marcus.vance@apexquant.io',
+        tradingViewUsername: 'MarcusVance_ES',
+        platformTarget: 'Dual-Platform' as const,
+        category: 'Webhook / Alert Setup' as const,
+        priority: 'Normal' as const,
+        status: 'Resolved' as const,
+        subject: '0DTE Zero-Gamma Flip JSON webhook signature verification for Apex execution router',
+        description:
+          'Configured TradingView server-side webhook alerts on SPX 1m chart using our signing token. Requesting verification of the `regime` and `invalidationAtrStop` payload fields.',
+        licenseKey: 'SE-GAMM-8841-A9C2',
+        adminResolutionNote:
+          'Verified 38ms round-trip webhook payload delivery to your execution bridge. Confirmed `invalidationAtrStop: 1.5` and `schema: stratedge.v6.signal` match production spec.',
+        createdAt: '2026-10-29 18:10:00 UTC',
+        updatedAt: '2026-10-29 18:34:00 UTC',
+      },
+      {
+        id: 'tkt-9034',
+        ticketNumber: 'TKT-9034',
+        customerName: 'David Chen',
+        customerEmail: 'david.chen@pacificcap.com',
+        tradingViewUsername: 'DChen_SwingMacro',
+        platformTarget: 'Dual-Platform' as const,
+        category: 'License Key Re-binding' as const,
+        priority: 'Normal' as const,
+        status: 'Open' as const,
+        subject: 'Re-bind thinkorswim account ID after Charles Schwab institutional migration',
+        description:
+          'Our Pacific Cap macro desk migrated TD Ameritrade accounts to Charles Schwab Institutional ID TOS-552901. Please update watermark binding on our Liquidity Matrix license.',
+        licenseKey: 'SE-LIQM-5529-C1D8',
+        adminResolutionNote: '',
+        createdAt: '2026-10-29 16:08:00 UTC',
+        updatedAt: '2026-10-29 16:08:00 UTC',
+      },
+    ].map((t) => ({
+      ...t,
+      messages: buildDefaultTicketMessages(t),
+    }))
+  );
   const metrics = ref<DashboardMetrics>({
     totalRevenue: 0,
     mrr: 0,
@@ -403,7 +449,12 @@ export const usePlatformStore = defineStore('platform', () => {
         allUsers.value = dashData.allUsers || [];
         webhookLogs.value = dashData.webhookLogs || [];
         if (Array.isArray(dashData.supportTickets)) {
-          supportTickets.value = dashData.supportTickets;
+          supportTickets.value = dashData.supportTickets.map(
+            (t: SupportTicketRecord) => ({
+              ...t,
+              messages: buildDefaultTicketMessages(t),
+            })
+          );
         }
         if (dashData.currentUser) {
           activeCustomerName.value = dashData.currentUser.name;
@@ -456,6 +507,72 @@ export const usePlatformStore = defineStore('platform', () => {
     }
   }
 
+  async function submitSupportTicket(payload: SupportTicketInput) {
+    const res = await fetch('/api/admin/tickets', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'Failed to submit support ticket.');
+    }
+    if (Array.isArray(data.tickets)) {
+      supportTickets.value = data.tickets.map((t: SupportTicketRecord) => ({
+        ...t,
+        messages: buildDefaultTicketMessages(t),
+      }));
+    }
+    await fetchAllData();
+    return data.ticket as SupportTicketRecord;
+  }
+
+  async function sendSupportTicketMessage(payload: SupportTicketMessageInput) {
+    const res = await fetch('/api/support-tickets/message', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'Failed to send message.');
+    }
+    if (Array.isArray(data.tickets)) {
+      supportTickets.value = data.tickets.map((t: SupportTicketRecord) => ({
+        ...t,
+        messages: buildDefaultTicketMessages(t),
+      }));
+    }
+    return data.ticket as SupportTicketRecord;
+  }
+
+  async function updateSupportTicketStatus(
+    ticketId: string,
+    status: 'Open' | 'In Progress' | 'Resolved',
+    adminResolutionNote?: string
+  ) {
+    const res = await fetch('/api/admin/tickets/update', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ticketId,
+        status,
+        adminResolutionNote,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'Failed to update ticket status.');
+    }
+    if (Array.isArray(data.tickets)) {
+      supportTickets.value = data.tickets.map((t: SupportTicketRecord) => ({
+        ...t,
+        messages: buildDefaultTicketMessages(t),
+      }));
+    }
+    return data.ticket as SupportTicketRecord;
+  }
+
   function signOut() {
     isAuthenticated.value = false;
     showNotification(
@@ -502,6 +619,9 @@ export const usePlatformStore = defineStore('platform', () => {
     clearCart,
     fetchAllData,
     switchCustomerProfile,
+    submitSupportTicket,
+    sendSupportTicketMessage,
+    updateSupportTicketStatus,
     signOut,
   };
 });

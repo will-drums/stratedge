@@ -14,6 +14,9 @@ import {
   TvSyncSchema,
   AdminProvisionSchema,
   SupportTicketSchema,
+  SupportTicketMessageSchema,
+  buildDefaultTicketMessages,
+  appendTicketMessage,
   type SupportTicketRecord,
   calculateOrderPricing,
   generateDeterministicLicenseKey,
@@ -104,7 +107,26 @@ async function startServer() {
       adminResolutionNote:
         'Awaiting automated TradingView Pine v6 ACL verification ping on primary & backup desk handles.',
       createdAt: '2026-10-31 14:12:00 UTC',
-      updatedAt: '2026-10-31 14:12:00 UTC',
+      updatedAt: '2026-10-31 14:18:00 UTC',
+    },
+    {
+      id: 'tkt-9039',
+      ticketNumber: 'TKT-9039',
+      customerName: 'Marcus Vance',
+      customerEmail: 'marcus.vance@apexquant.io',
+      tradingViewUsername: 'MarcusVance_ES',
+      platformTarget: 'thinkorswim',
+      category: 'thinkorswim Study Import',
+      priority: 'High',
+      status: 'In Progress',
+      subject: 'thinkorswim Desktop v5.4 Cumulative Volume Delta lower study memory buffer tuning',
+      description:
+        'Running StratEdge_Algo_Flow_v54.ts across 6 linked CME /ES and /NQ charts on Charles Schwab thinkorswim Desktop. Seeking recommended max-bars lookback parameter to minimize JVM heap usage during RTH open.',
+      licenseKey: 'SE-FLOW-4419-D8A1',
+      adminResolutionNote:
+        'Senior Quant Engineer Dr. Julian Vance: Set input institutionalLookbackBars = 1440 on 1-minute RTH charts to cap JVM heap allocation under 420MB while preserving full session CVD anchor parity.',
+      createdAt: '2026-10-30 21:05:00 UTC',
+      updatedAt: '2026-10-31 10:42:00 UTC',
     },
     {
       id: 'tkt-9038',
@@ -124,6 +146,25 @@ async function startServer() {
         'Assigned to Senior Quant Engineer: Provided 15-min secondary aggregation parameter preset for 0DTE SPX/ES.',
       createdAt: '2026-10-30 19:45:00 UTC',
       updatedAt: '2026-10-31 09:20:00 UTC',
+    },
+    {
+      id: 'tkt-9035',
+      ticketNumber: 'TKT-9035',
+      customerName: 'Marcus Vance',
+      customerEmail: 'marcus.vance@apexquant.io',
+      tradingViewUsername: 'MarcusVance_ES',
+      platformTarget: 'Dual-Platform',
+      category: 'Webhook / Alert Setup',
+      priority: 'Normal',
+      status: 'Resolved',
+      subject: '0DTE Zero-Gamma Flip JSON webhook signature verification for Apex execution router',
+      description:
+        'Configured TradingView server-side webhook alerts on SPX 1m chart using our signing token. Requesting verification of the `regime` and `invalidationAtrStop` payload fields.',
+      licenseKey: 'SE-GAMM-8841-A9C2',
+      adminResolutionNote:
+        'Verified 38ms round-trip webhook payload delivery to your execution bridge. Confirmed `invalidationAtrStop: 1.5` and `schema: stratedge.v6.signal` match production spec.',
+      createdAt: '2026-10-29 18:10:00 UTC',
+      updatedAt: '2026-10-29 18:34:00 UTC',
     },
     {
       id: 'tkt-9034',
@@ -181,7 +222,10 @@ async function startServer() {
       createdAt: '2026-10-25 08:15:00 UTC',
       updatedAt: '2026-10-25 10:40:00 UTC',
     },
-  ];
+  ].map((t) => ({
+    ...t,
+    messages: buildDefaultTicketMessages(t),
+  }));
 
   function buildSalesReport(allLicenses = db.select().from(licensesTable).all()) {
     const indicators = db.select().from(indicatorsTable).all();
@@ -1524,7 +1568,7 @@ async function startServer() {
     const nextNum = 9042 + supportTickets.length;
     const ticketNumber = `TKT-${nextNum}`;
 
-    const newTicket: SupportTicketRecord = {
+    const baseNewTicket: SupportTicketRecord = {
       id: `tkt-${Date.now()}`,
       ticketNumber,
       customerName: data.customerName,
@@ -1551,6 +1595,11 @@ async function startServer() {
       updatedAt: nowIso,
     };
 
+    const newTicket: SupportTicketRecord = {
+      ...baseNewTicket,
+      messages: buildDefaultTicketMessages(baseNewTicket),
+    };
+
     supportTickets = [newTicket, ...supportTickets];
 
     db.insert(webhookLogsTable)
@@ -1571,6 +1620,70 @@ async function startServer() {
     res.status(201).json({
       message: `Support ticket ${newTicket.ticketNumber} created and routed to Desk Operations.`,
       ticket: newTicket,
+      tickets: supportTickets,
+    });
+  });
+
+  app.post('/api/support-tickets/message', (req, res) => {
+    const parsed = SupportTicketMessageSchema.safeParse(req.body);
+    if (!parsed.success) {
+      const firstError =
+        parsed.error.issues[0]?.message || 'Invalid support message payload.';
+      res.status(400).json({ error: firstError, issues: parsed.error.issues });
+      return;
+    }
+
+    const data = parsed.data;
+    const idx = supportTickets.findIndex(
+      (t) => t.id === data.ticketId || t.ticketNumber === data.ticketId
+    );
+    if (idx < 0) {
+      res.status(404).json({ error: 'Support ticket not found.' });
+      return;
+    }
+
+    const nowIso = new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+    let updatedTicket = appendTicketMessage(supportTickets[idx], data, nowIso);
+
+    // If a client posts a follow-up message on an Open ticket, also log an immediate Quant Engineering Desk triage acknowledgment
+    if (data.senderRole === 'client' && updatedTicket.status === 'Open') {
+      updatedTicket = appendTicketMessage(
+        {
+          ...updatedTicket,
+          status: 'In Progress',
+        },
+        {
+          ticketId: updatedTicket.id,
+          senderRole: 'engineer',
+          senderName: 'Dr. Julian Vance — Senior Quant Engineer',
+          senderHandleOrTitle: 'StratEdge Quantitative Execution Desk',
+          body: `Received your diagnostic update on ${updatedTicket.ticketNumber}. We have verified your ${updatedTicket.platformTarget} telemetry for license ${updatedTicket.licenseKey} (@${updatedTicket.tradingViewUsername}) and moved your ticket to active engineering review.`,
+          diagnosticSnippet: `DESK_ACK=200_OK | HANDLE=@${updatedTicket.tradingViewUsername} | LICENSE=${updatedTicket.licenseKey}`,
+        },
+        nowIso
+      );
+    }
+
+    supportTickets[idx] = updatedTicket;
+
+    db.insert(webhookLogsTable)
+      .values({
+        id: `wh-${Date.now()}`,
+        eventType: 'support.ticket.message',
+        licenseKey: updatedTicket.ticketNumber,
+        customerEmail: updatedTicket.customerEmail,
+        tradingViewUsername: updatedTicket.tradingViewUsername,
+        platformTarget: `Support Messaging Thread (${data.senderRole.toUpperCase()})`,
+        status: `200 OK — ${updatedTicket.status}`,
+        latencyMs: 24,
+        payloadSummary: `[${updatedTicket.ticketNumber}] New message from ${data.senderName}: ${data.body.slice(0, 70)}`,
+        createdAt: nowIso,
+      })
+      .run();
+
+    res.status(201).json({
+      message: `Message posted to ticket ${updatedTicket.ticketNumber}.`,
+      ticket: updatedTicket,
       tickets: supportTickets,
     });
   });
@@ -1596,12 +1709,32 @@ async function startServer() {
 
     const existing = supportTickets[idx];
     const nowIso = new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+    const nextStatus =
+      status && ['Open', 'In Progress', 'Resolved'].includes(status)
+        ? status
+        : existing.status;
+
+    const existingMessages = buildDefaultTicketMessages(existing);
+    const statusChanged = nextStatus !== existing.status;
+    const statusLogMsg = statusChanged
+      ? [
+          {
+            id: `${existing.id}-status-${Date.now()}`,
+            ticketId: existing.id,
+            senderRole: 'system' as const,
+            senderName: 'StratEdge Ticket Lifecycle Monitor',
+            senderHandleOrTitle: 'Automated Status Tracker',
+            body: `Ticket ${existing.ticketNumber} status transitioned from "${existing.status}" to "${nextStatus}".${
+              adminResolutionNote?.trim() ? ` Note: ${adminResolutionNote.trim()}` : ''
+            }`,
+            createdAt: nowIso,
+          },
+        ]
+      : [];
+
     const updated: SupportTicketRecord = {
       ...existing,
-      status:
-        status && ['Open', 'In Progress', 'Resolved'].includes(status)
-          ? status
-          : existing.status,
+      status: nextStatus,
       priority:
         priority && ['Critical', 'High', 'Normal'].includes(priority)
           ? priority
@@ -1611,6 +1744,7 @@ async function startServer() {
           ? adminResolutionNote.trim()
           : existing.adminResolutionNote,
       updatedAt: nowIso,
+      messages: [...existingMessages, ...statusLogMsg],
     };
 
     supportTickets[idx] = updated;

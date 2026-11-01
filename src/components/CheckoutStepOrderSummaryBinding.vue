@@ -821,4 +821,14 @@ function verifyThinkorswimBinding() {
   border-color: rgba(16, 185, 129, 0.45);
   background: rgba(16, 185, 129, 0.06);
 }
+
+@media (max-width: 767px) {
+  .ledger-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .key-preview-chip {
+    margin-left: 0;
+  }
+}
 </style>

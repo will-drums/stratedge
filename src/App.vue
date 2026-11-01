@@ -11,6 +11,7 @@ import CartDrawer from './components/CartDrawer.vue';
 
 const store = usePlatformStore();
 const activeView = ref<'storefront' | 'checkout' | 'dashboard' | 'admin'>('storefront');
+const isMobileNavOpen = ref(false);
 
 // Reactive Unhead SEO Metadata (@unhead/vue) matching exact StratEdge Algo brand table
 const seoTitle = computed(() => {
@@ -70,6 +71,7 @@ function setView(
   hashAnchor?: string
 ) {
   activeView.value = view;
+  isMobileNavOpen.value = false;
   if (view === 'storefront' && hashAnchor) {
     setTimeout(() => {
       const el = document.querySelector(hashAnchor);
@@ -145,7 +147,7 @@ onMounted(() => {
           </a>
         </nav>
 
-        <!-- Zone 3: Sign In / Account + Shopping Cart Drawer Trigger -->
+        <!-- Zone 3: Sign In / Account + Shopping Cart Drawer Trigger + Mobile Toggle -->
         <div class="topbar-actions" style="gap: 10px;">
           <button
             type="button"
@@ -170,6 +172,78 @@ onMounted(() => {
               store.cartTotals.finalTotal.toLocaleString()
             }}
           </button>
+
+          <button
+            type="button"
+            class="mobile-menu-toggle"
+            data-testid="mobile-nav-toggle"
+            :aria-expanded="isMobileNavOpen"
+            aria-label="Toggle quick navigation drawer"
+            @click="isMobileNavOpen = !isMobileNavOpen"
+          >
+            {{ isMobileNavOpen ? '✕ Close' : '☰ Menu' }}
+          </button>
+        </div>
+
+        <!-- Expandable Mobile/Tablet Quick Navigation Drawer -->
+        <div
+          class="mobile-nav-drawer"
+          :class="{ open: isMobileNavOpen }"
+          data-testid="mobile-nav-drawer"
+        >
+          <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px;">
+            <button
+              type="button"
+              class="btn-ghost"
+              style="justify-content: flex-start;"
+              @click="setView('storefront', '#indicator-catalog')"
+            >
+              Indicators Catalog
+            </button>
+            <button
+              type="button"
+              class="btn-ghost"
+              style="justify-content: flex-start;"
+              @click="setView('storefront', '#pricing-plans')"
+            >
+              Membership Plans
+            </button>
+            <button
+              type="button"
+              class="btn-ghost"
+              style="justify-content: flex-start;"
+              @click="setView('checkout')"
+            >
+              3-Step Checkout
+            </button>
+            <button
+              type="button"
+              class="btn-ghost"
+              style="justify-content: flex-start;"
+              @click="setView('dashboard')"
+            >
+              Client Dashboard ({{ store.customerLicenses.length }})
+            </button>
+            <button
+              type="button"
+              class="btn-ghost"
+              style="justify-content: flex-start;"
+              @click="setView('admin')"
+            >
+              Admin Dashboard
+            </button>
+            <button
+              type="button"
+              class="btn-secondary"
+              style="justify-content: flex-start;"
+              @click="
+                isMobileNavOpen = false;
+                store.isCartDrawerOpen = true;
+              "
+            >
+              Open Cart ({{ store.cartTotals.itemCount }})
+            </button>
+          </div>
         </div>
       </div>
     </header>
@@ -177,12 +251,8 @@ onMounted(() => {
     <!-- Customizable Enterprise Announcement & Promo Bar -->
     <div
       v-if="store.platformSettings.announcementEnabled"
+      class="announcement-bar"
       data-testid="enterprise-announcement-bar"
-      style="
-        background: linear-gradient(90deg, rgba(16, 185, 129, 0.14), rgba(56, 189, 248, 0.12));
-        border-bottom: 1px solid rgba(16, 185, 129, 0.28);
-        padding: 8px 24px;
-      "
     >
       <div
         class="container"
@@ -211,7 +281,7 @@ onMounted(() => {
             {{ store.platformSettings.announcementBannerText }}
           </span>
         </div>
-        <div style="display: flex; align-items: center; gap: 12px;">
+        <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
           <span class="mono" style="color: var(--accent-amber);">
             Code: <strong>{{ store.platformSettings.announcementPromoCode }}</strong> ({{
               store.platformSettings.announcementDiscountPct

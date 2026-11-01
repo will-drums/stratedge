@@ -702,6 +702,17 @@ export function computeRevenuePeriodMetrics(
   };
 }
 
+export interface SupportTicketMessage {
+  id: string;
+  ticketId: string;
+  senderRole: 'client' | 'engineer' | 'system';
+  senderName: string;
+  senderHandleOrTitle: string;
+  body: string;
+  diagnosticSnippet?: string;
+  createdAt: string;
+}
+
 export interface SupportTicketRecord {
   id: string;
   ticketNumber: string;
@@ -723,6 +734,8 @@ export interface SupportTicketRecord {
   adminResolutionNote: string;
   createdAt: string;
   updatedAt: string;
+  supportKey?: string;
+  messages?: SupportTicketMessage[];
 }
 
 export const SupportTicketSchema = z.object({
@@ -760,10 +773,225 @@ export const SupportTicketSchema = z.object({
 
 export type SupportTicketInput = z.infer<typeof SupportTicketSchema>;
 
+export const SupportTicketMessageSchema = z.object({
+  ticketId: z.string().trim().min(1, 'Ticket ID is required.'),
+  senderRole: z.enum(['client', 'engineer', 'system']).default('client'),
+  senderName: z.string().trim().min(2, 'Sender name is required.'),
+  senderHandleOrTitle: z.string().trim().optional().default('Authorized Trader'),
+  body: z
+    .string()
+    .trim()
+    .min(4, 'Message must contain at least 4 characters.')
+    .max(2500, 'Message must be under 2,500 characters.'),
+  diagnosticSnippet: z.string().trim().optional().default(''),
+});
+
+export type SupportTicketMessageInput = z.infer<typeof SupportTicketMessageSchema>;
+
 export interface SupportTicketFilterOptions {
   status?: 'All' | 'Open' | 'In Progress' | 'Resolved';
   priority?: 'All' | 'Critical' | 'High' | 'Normal';
+  customerEmail?: string;
   searchQuery?: string;
+}
+
+export function buildDefaultTicketMessages(
+  ticket: SupportTicketRecord
+): SupportTicketMessage[] {
+  if (Array.isArray(ticket.messages) && ticket.messages.length > 0) {
+    return ticket.messages;
+  }
+
+  const thread: SupportTicketMessage[] = [
+    {
+      id: `${ticket.id}-msg-1`,
+      ticketId: ticket.id,
+      senderRole: 'client',
+      senderName: ticket.customerName,
+      senderHandleOrTitle: `@${ticket.tradingViewUsername} · ${ticket.platformTarget}`,
+      body: ticket.description,
+      diagnosticSnippet: `License: ${ticket.licenseKey} | Category: ${ticket.category} | Priority: ${ticket.priority}`,
+      createdAt: ticket.createdAt,
+    },
+    {
+      id: `${ticket.id}-msg-2`,
+      ticketId: ticket.id,
+      senderRole: 'system',
+      senderName: 'StratEdge Automated Triage Router',
+      senderHandleOrTitle: 'Cryptographic Entitlement & SLA Engine',
+      body: `Ticket ${ticket.ticketNumber} authenticated and linked to license ${ticket.licenseKey}. Target SLA response window for ${ticket.priority} priority: ${
+        ticket.priority === 'Critical'
+          ? '< 10 minutes'
+          : ticket.priority === 'High'
+          ? '< 25 minutes'
+          : '< 2 hours'
+      }.`,
+      createdAt: ticket.createdAt,
+    },
+  ];
+
+  if (ticket.adminResolutionNote && ticket.adminResolutionNote.trim().length > 0) {
+    thread.push({
+      id: `${ticket.id}-msg-3`,
+      ticketId: ticket.id,
+      senderRole: 'engineer',
+      senderName: 'Dr. Julian Vance — Senior Quant Engineer',
+      senderHandleOrTitle: 'StratEdge Quantitative Execution Desk',
+      body: ticket.adminResolutionNote.trim(),
+      diagnosticSnippet:
+        ticket.platformTarget === 'thinkorswim'
+          ? 'input secondaryAggregation = AggregationPeriod.FIFTEEN_MIN; # Confirmed Non-Repainting Lock'
+          : `ACL Status: 200 OK — Whitelisted @${ticket.tradingViewUsername} (${ticket.licenseKey})`,
+      createdAt: ticket.updatedAt || ticket.createdAt,
+    });
+  }
+
+  return thread;
+}
+
+export function appendTicketMessage(
+  ticket: SupportTicketRecord,
+  input: SupportTicketMessageInput,
+  timestampIso: string = '2026-11-01 09:30:00 UTC'
+): SupportTicketRecord {
+  const existingMessages = buildDefaultTicketMessages(ticket);
+  const newMsg: SupportTicketMessage = {
+    id: `${ticket.id}-msg-${existingMessages.length + 1}-${Date.now()}`,
+    ticketId: ticket.id,
+    senderRole: input.senderRole,
+    senderName: input.senderName.trim(),
+    senderHandleOrTitle:
+      input.senderHandleOrTitle?.trim() ||
+      (input.senderRole === 'engineer'
+        ? 'StratEdge Quantitative Execution Desk'
+        : `@${ticket.tradingViewUsername}`),
+    body: input.body.trim(),
+    diagnosticSnippet: input.diagnosticSnippet?.trim() || undefined,
+    createdAt: timestampIso,
+  };
+
+  let nextStatus = ticket.status;
+  if (input.senderRole === 'engineer' && ticket.status === 'Open') {
+    nextStatus = 'In Progress';
+  } else if (input.senderRole === 'client' && ticket.status === 'Resolved') {
+    nextStatus = 'In Progress';
+  }
+
+  return {
+    ...ticket,
+    status: nextStatus,
+    updatedAt: timestampIso,
+    adminResolutionNote:
+      input.senderRole === 'engineer' ? input.body.trim() : ticket.adminResolutionNote,
+    messages: [...existingMessages, newMsg],
+  };
+}
+
+export interface TicketLifecycleStage {
+  step: 1 | 2 | 3;
+  label: string;
+  sublabel: string;
+  completed: boolean;
+  active: boolean;
+}
+
+export interface TicketLifecycleProgress {
+  currentStageIndex: 1 | 2 | 3;
+  completionPct: number;
+  slaTargetLabel: string;
+  stages: TicketLifecycleStage[];
+}
+
+export function computeTicketLifecycleProgress(
+  status: SupportTicketRecord['status'],
+  priority: SupportTicketRecord['priority'] = 'Normal'
+): TicketLifecycleProgress {
+  const currentStageIndex: 1 | 2 | 3 =
+    status === 'Resolved' ? 3 : status === 'In Progress' ? 2 : 1;
+  const completionPct =
+    status === 'Resolved' ? 100 : status === 'In Progress' ? 66 : 33;
+  const slaTargetLabel =
+    priority === 'Critical'
+      ? '< 10m Priority Desk SLA'
+      : priority === 'High'
+      ? '< 25m Priority Desk SLA'
+      : '< 2h Standard Desk SLA';
+
+  const stages: TicketLifecycleStage[] = [
+    {
+      step: 1,
+      label: '1. Ticket Logged & ACL Verified',
+      sublabel: 'Cryptographic license key & platform handle authenticated',
+      completed: currentStageIndex >= 1,
+      active: currentStageIndex === 1,
+    },
+    {
+      step: 2,
+      label: '2. Quant Engineer Assigned',
+      sublabel: 'Active diagnostic triage & Pine v6 / ThinkScript verification',
+      completed: currentStageIndex >= 2,
+      active: currentStageIndex === 2,
+    },
+    {
+      step: 3,
+      label: '3. Resolution Verified',
+      sublabel: 'Fix confirmed in production & transcript archived in vault',
+      completed: currentStageIndex === 3,
+      active: currentStageIndex === 3,
+    },
+  ];
+
+  return {
+    currentStageIndex,
+    completionPct,
+    slaTargetLabel,
+    stages,
+  };
+}
+
+export interface ClientTicketStatusSummary {
+  total: number;
+  open: number;
+  inProgress: number;
+  resolved: number;
+  criticalActive: number;
+  totalMessages: number;
+}
+
+export function computeClientTicketStatusSummary(
+  tickets: SupportTicketRecord[],
+  customerEmail?: string
+): ClientTicketStatusSummary {
+  const emailNorm = (customerEmail || '').trim().toLowerCase();
+  const scoped = emailNorm
+    ? tickets.filter((t) => t.customerEmail.toLowerCase() === emailNorm)
+    : tickets;
+
+  let open = 0;
+  let inProgress = 0;
+  let resolved = 0;
+  let criticalActive = 0;
+  let totalMessages = 0;
+
+  for (const t of scoped) {
+    if (t.status === 'Open') open += 1;
+    else if (t.status === 'In Progress') inProgress += 1;
+    else if (t.status === 'Resolved') resolved += 1;
+
+    if (t.priority === 'Critical' && t.status !== 'Resolved') {
+      criticalActive += 1;
+    }
+    totalMessages += buildDefaultTicketMessages(t).length;
+  }
+
+  return {
+    total: scoped.length,
+    open,
+    inProgress,
+    resolved,
+    criticalActive,
+    totalMessages,
+  };
 }
 
 export function filterSupportTickets(
@@ -772,9 +1000,13 @@ export function filterSupportTickets(
 ): SupportTicketRecord[] {
   const statusFilter = filters.status || 'All';
   const priorityFilter = filters.priority || 'All';
+  const emailFilter = (filters.customerEmail || '').trim().toLowerCase();
   const q = (filters.searchQuery || '').trim().toLowerCase();
 
   return tickets.filter((t) => {
+    if (emailFilter && t.customerEmail.toLowerCase() !== emailFilter) {
+      return false;
+    }
     if (statusFilter !== 'All' && t.status !== statusFilter) {
       return false;
     }
@@ -782,15 +1014,18 @@ export function filterSupportTickets(
       return false;
     }
     if (q) {
+      const msgBodies = (t.messages || []).map((m) => m.body).join(' ');
       const hay = [
         t.ticketNumber,
         t.customerName,
         t.customerEmail,
         t.tradingViewUsername,
         t.subject,
+        t.description,
         t.category,
         t.licenseKey,
         t.platformTarget,
+        msgBodies,
       ]
         .join(' ')
         .toLowerCase();
@@ -1171,6 +1406,134 @@ export function computeLiquidityDepthMatrix(
     imbalancePct,
     equilibriumStrikeLabel,
     netRegimeLabel,
+  };
+}
+
+export type EnterpriseViewportTier = 'xs' | 'sm' | 'md' | 'lg' | 'xl' | '2xl';
+
+export interface EnterpriseViewportConfig {
+  tier: EnterpriseViewportTier;
+  widthPx: number;
+  heightPx: number;
+  aspectRatio: number;
+  deviceCategoryLabel: string;
+  navigationMode: 'mobile-drawer' | 'desktop-inline';
+  catalogColumns: 1 | 2 | 3;
+  kpiColumns: 1 | 2 | 4;
+  checkoutStepperColumns: 1 | 3;
+  heroCameraDistanceMultiplier: number;
+  heroCanvasHeightPx: number;
+}
+
+export const ENTERPRISE_BREAKPOINTS_2026 = {
+  xsMax: 480, // Compact & Standard Smartphones (iPhone SE, iPhone 16/17 Pro, Galaxy S26, Foldable Cover)
+  smMax: 767, // Large Phablets & Unfolded Foldables (Pixel Pro Fold, Galaxy Z Fold)
+  mdMax: 1023, // Tablet Portrait (iPad Mini, iPad Air 768x1024, 820x1180)
+  lgMax: 1279, // Tablet Landscape & Compact 13" Laptops (iPad Pro 1024x768, 1280x800)
+  xlMax: 1535, // Standard Enterprise Desktop (1366x768, 1440x900)
+  ultraWideMin: 1536, // Ultra-Wide & 4K Multi-Monitor Trading Desks (1920x1080, 2560x1440, 3840x2160)
+} as const;
+
+export function resolveEnterpriseViewportTier(
+  widthPx: number,
+  heightPx: number = 900
+): EnterpriseViewportConfig {
+  const safeW = Math.max(280, Math.round(Number(widthPx) || 1440));
+  const safeH = Math.max(320, Math.round(Number(heightPx) || 900));
+  const aspectRatio = Number((safeW / safeH).toFixed(3));
+
+  if (safeW <= ENTERPRISE_BREAKPOINTS_2026.xsMax) {
+    return {
+      tier: 'xs',
+      widthPx: safeW,
+      heightPx: safeH,
+      aspectRatio,
+      deviceCategoryLabel: 'Compact / Standard Mobile Handset',
+      navigationMode: 'mobile-drawer',
+      catalogColumns: 1,
+      kpiColumns: 1,
+      checkoutStepperColumns: 1,
+      heroCameraDistanceMultiplier: safeW <= 380 ? 1.18 : 1.12,
+      heroCanvasHeightPx: 250,
+    };
+  }
+
+  if (safeW <= ENTERPRISE_BREAKPOINTS_2026.smMax) {
+    return {
+      tier: 'sm',
+      widthPx: safeW,
+      heightPx: safeH,
+      aspectRatio,
+      deviceCategoryLabel: 'Phablet / Foldable Unfolded',
+      navigationMode: 'mobile-drawer',
+      catalogColumns: 1,
+      kpiColumns: 2,
+      checkoutStepperColumns: 1,
+      heroCameraDistanceMultiplier: 1.06,
+      heroCanvasHeightPx: 280,
+    };
+  }
+
+  if (safeW <= ENTERPRISE_BREAKPOINTS_2026.mdMax) {
+    return {
+      tier: 'md',
+      widthPx: safeW,
+      heightPx: safeH,
+      aspectRatio,
+      deviceCategoryLabel: 'Tablet Portrait Workspace',
+      navigationMode: 'mobile-drawer',
+      catalogColumns: 2,
+      kpiColumns: 2,
+      checkoutStepperColumns: 3,
+      heroCameraDistanceMultiplier: 1.02,
+      heroCanvasHeightPx: 310,
+    };
+  }
+
+  if (safeW <= ENTERPRISE_BREAKPOINTS_2026.lgMax) {
+    return {
+      tier: 'lg',
+      widthPx: safeW,
+      heightPx: safeH,
+      aspectRatio,
+      deviceCategoryLabel: 'Tablet Landscape / Compact Laptop',
+      navigationMode: 'desktop-inline',
+      catalogColumns: 2,
+      kpiColumns: 4,
+      checkoutStepperColumns: 3,
+      heroCameraDistanceMultiplier: 1.04,
+      heroCanvasHeightPx: 325,
+    };
+  }
+
+  if (safeW <= ENTERPRISE_BREAKPOINTS_2026.xlMax) {
+    return {
+      tier: 'xl',
+      widthPx: safeW,
+      heightPx: safeH,
+      aspectRatio,
+      deviceCategoryLabel: 'Standard Enterprise Desktop',
+      navigationMode: 'desktop-inline',
+      catalogColumns: 3,
+      kpiColumns: 4,
+      checkoutStepperColumns: 3,
+      heroCameraDistanceMultiplier: 1.0,
+      heroCanvasHeightPx: 335,
+    };
+  }
+
+  return {
+    tier: '2xl',
+    widthPx: safeW,
+    heightPx: safeH,
+    aspectRatio,
+    deviceCategoryLabel: 'Ultra-Wide 4K Institutional Trading Desk',
+    navigationMode: 'desktop-inline',
+    catalogColumns: 3,
+    kpiColumns: 4,
+    checkoutStepperColumns: 3,
+    heroCameraDistanceMultiplier: 0.96,
+    heroCanvasHeightPx: 360,
   };
 }
 

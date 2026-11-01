@@ -244,13 +244,7 @@ function verifyTosAccountNow() {
         <span>Select Primary Charting &amp; Orderflow Environment</span>
       </div>
 
-      <div
-        style="
-          display: grid;
-          grid-template-columns: repeat(3, minmax(0, 1fr));
-          gap: 12px;
-        "
-      >
+      <div class="platform-pref-cards-grid">
         <!-- Card 1: TradingView (Pine Script v6) -->
         <button
           type="button"

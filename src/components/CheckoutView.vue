@@ -486,14 +486,7 @@ async function downloadReceiptStudy(lic: LicenseRecord) {
         style="margin-bottom: 28px; padding: 18px 22px;"
         data-testid="checkout-stepper"
       >
-        <div
-          style="
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 16px;
-            align-items: center;
-          "
-        >
+        <div class="checkout-stepper-grid">
           <!-- Step 1 Pill/Tab: User Identity & Platform Preference -->
           <button
             type="button"

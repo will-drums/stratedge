@@ -1178,9 +1178,8 @@ async function handleCreateSupportTicket() {
                   type="date"
                   min="2026-05-05"
                   max="2026-10-31"
-                  class="form-input mono"
+                  class="form-input mono admin-filter-control"
                   data-testid="recharts-start-date"
-                  style="min-height: 34px; padding: 4px 10px; font-size: 0.78rem; width: 148px;"
                 />
               </div>
 
@@ -1202,9 +1201,8 @@ async function handleCreateSupportTicket() {
                   type="date"
                   min="2026-05-05"
                   max="2026-10-31"
-                  class="form-input mono"
+                  class="form-input mono admin-filter-control"
                   data-testid="recharts-end-date"
-                  style="min-height: 34px; padding: 4px 10px; font-size: 0.78rem; width: 148px;"
                 />
               </div>
 
@@ -1223,9 +1221,8 @@ async function handleCreateSupportTicket() {
                 <select
                   id="recharts-tier-filter-select"
                   v-model="revenueTierSlice"
-                  class="form-select"
+                  class="form-select admin-filter-control"
                   data-testid="recharts-tier-filter"
-                  style="min-height: 34px; padding: 4px 10px; font-size: 0.78rem; width: 145px;"
                 >
                   <option value="All">All Tiers</option>
                   <option value="Lifetime">Lifetime Only</option>
@@ -1249,9 +1246,8 @@ async function handleCreateSupportTicket() {
                 <select
                   id="recharts-indicator-filter-select"
                   v-model="revenueIndicatorSlice"
-                  class="form-select"
+                  class="form-select admin-filter-control"
                   data-testid="recharts-indicator-filter"
-                  style="min-height: 34px; padding: 4px 10px; font-size: 0.78rem; width: 205px;"
                 >
                   <option value="All">All Storefront Indicators</option>
                   <option v-for="ind in store.indicators" :key="ind.id" :value="ind.id">
@@ -1733,7 +1729,7 @@ async function handleCreateSupportTicket() {
               </div>
 
               <!-- Global Search Input -->
-              <div style="min-width: 250px;">
+              <div class="admin-sales-search-wrap">
                 <input
                   v-model="licenseFilter"
                   type="search"

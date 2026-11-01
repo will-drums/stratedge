@@ -522,7 +522,7 @@ async function copyLicenseKey(key: string) {
             </div>
           </div>
 
-          <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
+          <div class="card-security-grid-3">
             <div class="form-field" style="margin-bottom: 0;">
               <label for="chk-cardExpiry" class="form-label">
                 Expiry (MM/YY) *

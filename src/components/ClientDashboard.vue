@@ -2,6 +2,7 @@
 import { ref, computed, watch } from 'vue';
 import { usePlatformStore, type LicenseRecord } from '../stores/platformStore';
 import { TvSyncSchema } from '../utils/fulfillment';
+import SupportTicketing from './SupportTicketing.vue';
 
 const emit = defineEmits<{
   (e: 'navigate', view: 'storefront' | 'checkout' | 'dashboard' | 'admin'): void;
@@ -872,7 +873,7 @@ async function copyText(text: string, label: string) {
           </div>
 
           <!-- Account Switcher & Lock / Sign Out Controls -->
-          <div style="display: flex; flex-direction: column; gap: 8px; min-width: 310px;">
+          <div class="dashboard-session-switcher">
             <label for="customer-account-select" class="form-label">
               Authenticated Member Session
             </label>
@@ -976,7 +977,7 @@ async function copyText(text: string, label: string) {
               data-testid="tab-support-keys"
               @click="activePortalTab = 'support'"
             >
-              3. Support Keys &amp; Desk Help
+              3. Support Ticketing &amp; Desk Messaging ({{ store.supportTickets.length }})
             </button>
             <button
               type="button"
@@ -1230,7 +1231,7 @@ async function copyText(text: string, label: string) {
              TAB 2: DOCUMENTATION & INSTALLATION GUIDES
              ================================================================= -->
         <div v-else-if="activePortalTab === 'guides'">
-          <div class="trinity-spotlight-grid" style="grid-template-columns: repeat(2, 1fr);">
+          <div class="trinity-spotlight-grid guides-grid-2">
             <!-- Guide 1: TradingView Setup Guide -->
             <article class="trinity-pillar-card" data-testid="guide-card-tv">
               <div>
@@ -1407,271 +1408,113 @@ async function copyText(text: string, label: string) {
         </div>
 
         <!-- =================================================================
-             TAB 3: SUPPORT KEYS, WEBHOOK TOKENS & PRIORITY QUANT DESK HELP
+             TAB 3: SUPPORT TICKETING, MESSAGING & CRYPTOGRAPHIC CREDENTIALS
              ================================================================= -->
         <div v-else-if="activePortalTab === 'support'" data-testid="support-keys-section">
-          <div class="checkout-grid">
-            <!-- Left: Cryptographic Support Keys & Entitlement Credentials -->
-            <div class="form-panel">
-              <div class="meta-line">
-                <span class="meta-accent">Cryptographic Member Credentials</span>
-                <span class="meta-sep" aria-hidden="true">·</span>
-                <span>24/5 Priority Desk Verification</span>
-              </div>
-              <h2
-                style="
-                  font-family: var(--font-display);
-                  font-size: 1.3rem;
-                  font-weight: 700;
-                  margin-top: 6px;
-                  margin-bottom: 16px;
-                "
-              >
-                Your Support Keys &amp; Webhook Signing Credentials
-              </h2>
+          <!-- Compact Cryptographic Support Key & Webhook Signing Credentials Bar -->
+          <div class="bento-panel" style="margin-bottom: 24px;">
+            <div class="meta-line">
+              <span class="meta-accent">Cryptographic Member Credentials</span>
+              <span class="meta-sep" aria-hidden="true">·</span>
+              <span>24/5 Priority Desk Verification</span>
+              <span class="meta-sep" aria-hidden="true">·</span>
+              <span>{{ store.platformSettings.supportEmail }}</span>
+            </div>
+            <h2
+              style="
+                font-family: var(--font-display);
+                font-size: 1.2rem;
+                font-weight: 700;
+                margin-top: 4px;
+                margin-bottom: 14px;
+              "
+            >
+              Your Support Keys &amp; Webhook Signing Credentials
+            </h2>
 
-              <div class="step-list">
-                <!-- Credential 1: Primary Member Support Key -->
-                <div class="step-item">
-                  <div class="meta-line">
-                    <span class="mono" style="color: var(--accent-emerald-bright); font-weight: 700;">
-                      PRIMARY MEMBER SUPPORT KEY
-                    </span>
-                    <span class="meta-sep" aria-hidden="true">·</span>
-                    <span>SLA: &lt; 15 Min Desk Response</span>
-                  </div>
-                  <div
-                    style="
-                      display: flex;
-                      justify-content: space-between;
-                      align-items: center;
-                      gap: 12px;
-                      margin-top: 8px;
-                      flex-wrap: wrap;
-                    "
-                  >
-                    <code
-                      class="mono"
-                      style="font-size: 1rem; font-weight: 700; color: var(--text-primary);"
-                      data-testid="member-support-key-code"
-                    >
-                      {{ memberSupportKey }}
-                    </code>
-                    <button
-                      type="button"
-                      class="btn-secondary"
-                      style="padding: 6px 12px; min-height: 32px; font-size: 0.75rem;"
-                      data-testid="copy-support-key-btn"
-                      @click="copyText(memberSupportKey, 'Member Support Key')"
-                    >
-                      Copy Support Key
-                    </button>
-                  </div>
+            <div class="form-row-2">
+              <!-- Credential 1: Primary Member Support Key -->
+              <div class="step-item">
+                <div class="meta-line">
+                  <span class="mono" style="color: var(--accent-emerald-bright); font-weight: 700;">
+                    PRIMARY MEMBER SUPPORT KEY
+                  </span>
+                  <span class="meta-sep" aria-hidden="true">·</span>
+                  <span>SLA: &lt; 15 Min Desk Response</span>
                 </div>
-
-                <!-- Credential 2: Webhook Signing Token -->
-                <div class="step-item">
-                  <div class="meta-line">
-                    <span class="mono" style="color: var(--accent-sky); font-weight: 700;">
-                      WEBHOOK ALERT SIGNING SECRET
-                    </span>
-                    <span class="meta-sep" aria-hidden="true">·</span>
-                    <span>TradingView JSON Auth</span>
-                  </div>
-                  <div
-                    style="
-                      display: flex;
-                      justify-content: space-between;
-                      align-items: center;
-                      gap: 12px;
-                      margin-top: 8px;
-                      flex-wrap: wrap;
-                    "
-                  >
-                    <code
-                      class="mono"
-                      style="font-size: 0.88rem; color: var(--text-primary);"
-                      data-testid="webhook-signing-token-code"
-                    >
-                      {{ webhookSigningToken }}
-                    </code>
-                    <button
-                      type="button"
-                      class="btn-secondary"
-                      style="padding: 6px 12px; min-height: 32px; font-size: 0.75rem;"
-                      @click="copyText(webhookSigningToken, 'Webhook Signing Secret')"
-                    >
-                      Copy Secret
-                    </button>
-                  </div>
-                </div>
-
-                <!-- Credential 3: Individual Indicator License Support Keys -->
                 <div
-                  v-for="lic in store.customerLicenses"
-                  :key="`sup-${lic.id}`"
-                  class="step-item"
+                  style="
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    gap: 12px;
+                    margin-top: 8px;
+                    flex-wrap: wrap;
+                  "
                 >
-                  <div class="meta-line">
-                    <span class="mono" style="color: var(--accent-amber);">
-                      PRODUCT ENTITLEMENT KEY
-                    </span>
-                    <span class="meta-sep" aria-hidden="true">·</span>
-                    <span>{{ lic.indicatorName }}</span>
-                  </div>
-                  <div
-                    style="
-                      display: flex;
-                      justify-content: space-between;
-                      align-items: center;
-                      gap: 12px;
-                      margin-top: 8px;
-                      flex-wrap: wrap;
-                    "
+                  <code
+                    class="mono"
+                    style="font-size: 0.96rem; font-weight: 700; color: var(--text-primary);"
+                    data-testid="member-support-key-code"
                   >
-                    <code class="mono" style="font-size: 0.92rem; color: var(--text-primary);">
-                      {{ lic.licenseKey }}
-                    </code>
-                    <button
-                      type="button"
-                      class="btn-ghost"
-                      style="padding: 5px 10px; min-height: 28px; font-size: 0.75rem;"
-                      @click="copyText(lic.licenseKey, `${lic.indicatorName} License Key`)"
-                    >
-                      Copy License Key
-                    </button>
-                  </div>
+                    {{ memberSupportKey }}
+                  </code>
+                  <button
+                    type="button"
+                    class="btn-secondary"
+                    style="padding: 6px 12px; min-height: 32px; font-size: 0.75rem;"
+                    data-testid="copy-support-key-btn"
+                    @click="copyText(memberSupportKey, 'Member Support Key')"
+                  >
+                    Copy Support Key
+                  </button>
+                </div>
+              </div>
+
+              <!-- Credential 2: Webhook Signing Token -->
+              <div class="step-item">
+                <div class="meta-line">
+                  <span class="mono" style="color: var(--accent-sky); font-weight: 700;">
+                    WEBHOOK ALERT SIGNING SECRET
+                  </span>
+                  <span class="meta-sep" aria-hidden="true">·</span>
+                  <span>TradingView JSON Auth</span>
+                </div>
+                <div
+                  style="
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    gap: 12px;
+                    margin-top: 8px;
+                    flex-wrap: wrap;
+                  "
+                >
+                  <code
+                    class="mono"
+                    style="font-size: 0.86rem; color: var(--text-primary);"
+                    data-testid="webhook-signing-token-code"
+                  >
+                    {{ webhookSigningToken }}
+                  </code>
+                  <button
+                    type="button"
+                    class="btn-secondary"
+                    style="padding: 6px 12px; min-height: 32px; font-size: 0.75rem;"
+                    @click="copyText(webhookSigningToken, 'Webhook Signing Secret')"
+                  >
+                    Copy Secret
+                  </button>
                 </div>
               </div>
             </div>
-
-            <!-- Right: Priority Institutional Support Dispatch Form -->
-            <form
-              class="form-panel"
-              data-testid="priority-support-form"
-              @submit.prevent="submitPrioritySupportTicket"
-            >
-              <div class="meta-line">
-                <span class="meta-accent">Direct Engineering &amp; Quant Desk Channel</span>
-                <span class="meta-sep" aria-hidden="true">·</span>
-                <span>{{ store.platformSettings.supportEmail }}</span>
-              </div>
-              <h2
-                style="
-                  font-family: var(--font-display);
-                  font-size: 1.3rem;
-                  font-weight: 700;
-                  margin-top: 6px;
-                  margin-bottom: 16px;
-                "
-              >
-                Open Priority Quant Support Ticket
-              </h2>
-
-              <div class="form-row-2">
-                <div class="form-field">
-                  <label class="form-label">Authenticated Support Key</label>
-                  <input
-                    :value="memberSupportKey"
-                    type="text"
-                    class="form-input mono"
-                    disabled
-                  />
-                </div>
-                <div class="form-field">
-                  <label class="form-label" for="sup-category">Support Category</label>
-                  <select
-                    id="sup-category"
-                    v-model="supportCategory"
-                    class="form-select"
-                  >
-                    <option value="TradingView Invite-Only Script ACL">
-                      TradingView Invite-Only Script ACL
-                    </option>
-                    <option value="Charles Schwab thinkorswim .ts Import">
-                      Charles Schwab thinkorswim .ts Import
-                    </option>
-                    <option value="GEX / CVD Calibration & Webhook Setup">
-                      GEX / CVD Calibration &amp; Webhook Setup
-                    </option>
-                    <option value="Prop Desk Multi-Seat Licensing">
-                      Prop Desk Multi-Seat Licensing
-                    </option>
-                  </select>
-                </div>
-              </div>
-
-              <div class="form-field">
-                <label class="form-label" for="sup-lic">Related Indicator License</label>
-                <select
-                  id="sup-lic"
-                  v-model="supportLicenseKey"
-                  class="form-select mono"
-                >
-                  <option value="">All Active Licenses ({{ store.customerLicenses.length }})</option>
-                  <option
-                    v-for="lic in store.customerLicenses"
-                    :key="lic.id"
-                    :value="lic.licenseKey"
-                  >
-                    {{ lic.licenseKey }} — {{ lic.indicatorName }}
-                  </option>
-                </select>
-              </div>
-
-              <div class="form-field">
-                <label class="form-label" for="sup-subject">Ticket Subject</label>
-                <input
-                  id="sup-subject"
-                  v-model="supportSubject"
-                  type="text"
-                  class="form-input"
-                  data-testid="support-subject-input"
-                  placeholder="e.g. Assistance configuring 0DTE Gamma Wall webhook alerts on ES1!"
-                />
-              </div>
-
-              <div class="form-field">
-                <label class="form-label" for="sup-message">Technical Details</label>
-                <textarea
-                  id="sup-message"
-                  v-model="supportMessage"
-                  rows="3"
-                  class="form-input"
-                  style="resize: vertical; min-height: 84px;"
-                  placeholder="Include your chart ticker, timeframe, or any specific thinkorswim / TradingView setup questions..."
-                ></textarea>
-              </div>
-
-              <button
-                type="submit"
-                class="btn-primary"
-                style="width: 100%;"
-                data-testid="submit-support-ticket-btn"
-              >
-                Dispatch Priority Ticket with Support Key →
-              </button>
-
-              <div
-                v-if="supportTicketConfirmation"
-                class="step-item"
-                style="margin-top: 16px; border-color: rgba(16, 185, 129, 0.45);"
-                data-testid="support-ticket-confirmation"
-              >
-                <div class="meta-line">
-                  <span class="mono" style="color: var(--accent-emerald-bright); font-weight: 700;">
-                    TICKET {{ supportTicketConfirmation.ticketId }} LOGGED
-                  </span>
-                  <span class="meta-sep" aria-hidden="true">·</span>
-                  <span class="mono">{{ supportTicketConfirmation.supportKey }}</span>
-                </div>
-                <p style="font-size: 0.85rem; color: var(--text-primary); margin-top: 6px;">
-                  <strong>{{ supportTicketConfirmation.subject }}</strong> — Assigned to Senior
-                  Quant Desk Engineering ({{ supportTicketConfirmation.createdAt }}).
-                </p>
-              </div>
-            </form>
           </div>
+
+          <!-- Dedicated Support Ticketing & Messaging Interface Component -->
+          <SupportTicketing
+            :member-support-key="memberSupportKey"
+            :webhook-signing-token="webhookSigningToken"
+          />
         </div>
 
         <!-- =================================================================

@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import {
   computeLiquidityDepthMatrix,
+  resolveEnterpriseViewportTier,
   type HeroDepthMode,
   type HeroInstrumentFeed,
   type LiquidityGridNode,
@@ -95,14 +96,17 @@ function syncTargetNodes() {
   }
 }
 
+let cameraDistanceScale = 1.0;
+
 function applyCameraPreset(preset: 'Isometric' | 'DepthWall' | 'TopGrid') {
   activeCameraPreset.value = preset;
+  const s = cameraDistanceScale;
   if (preset === 'Isometric') {
-    _desiredCamPos.set(7.4, 6.6, 8.8);
+    _desiredCamPos.set(7.4 * s, 6.6 * s, 8.8 * s);
   } else if (preset === 'DepthWall') {
-    _desiredCamPos.set(0.0, 3.8, 10.8);
+    _desiredCamPos.set(0.0, 3.8 * s, 10.8 * s);
   } else {
-    _desiredCamPos.set(0.2, 11.4, 2.8);
+    _desiredCamPos.set(0.2, 11.4 * s, 2.8 * s);
   }
 }
 
@@ -417,11 +421,19 @@ onMounted(() => {
   // Start paced animation loop
   tick();
 
-  // Responsive ResizeObserver
+  // Responsive ResizeObserver with Enterprise Breakpoint Camera Framing
+  const syncViewportCameraScale = (w: number, h: number) => {
+    const tierCfg = resolveEnterpriseViewportTier(window.innerWidth || w, window.innerHeight || h);
+    cameraDistanceScale = tierCfg.heroCameraDistanceMultiplier;
+    applyCameraPreset(activeCameraPreset.value);
+  };
+  syncViewportCameraScale(width, height);
+
   resizeObserver = new ResizeObserver(() => {
     if (!container || !renderer || !camera) return;
     const w = container.clientWidth || 560;
     const h = container.clientHeight || 330;
+    syncViewportCameraScale(w, h);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
     renderer.setSize(w, h);
@@ -554,10 +566,7 @@ onBeforeUnmount(() => {
     </div>
 
     <!-- Quantitative Market Depth & Liquidity Telemetry Footer Readout -->
-    <div
-      class="terminal-footer"
-      style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; padding-top: 8px; border-top: 1px solid var(--border-hairline);"
-    >
+    <div class="terminal-footer hero-telemetry-footer">
       <div>
         <div class="kpi-context">Bid / Ask Liquidity Wall</div>
         <div

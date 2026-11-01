@@ -18,10 +18,17 @@ import {
   computeRevenuePeriodMetrics,
   computeCustomerLicenseDistribution,
   SupportTicketSchema,
+  SupportTicketMessageSchema,
+  buildDefaultTicketMessages,
+  appendTicketMessage,
+  computeTicketLifecycleProgress,
+  computeClientTicketStatusSummary,
   filterSupportTickets,
   TRADER_FAQ_ITEMS,
   filterTraderFaqs,
   computeLiquidityDepthMatrix,
+  ENTERPRISE_BREAKPOINTS_2026,
+  resolveEnterpriseViewportTier,
   type SupportTicketRecord,
 } from './fulfillment';
 
@@ -514,6 +521,118 @@ test('computeLiquidityDepthMatrix generates 64-node 3D liquidity grid and depth 
   assert.equal(structureEs.nodes.length, 64);
   assert.equal(structureEs.netRegimeLabel, 'Bullish BOS Confirmed');
 });
+
+test('resolveEnterpriseViewportTier classifies xs, sm, md, lg, xl, and 2xl enterprise breakpoints accurately', () => {
+  assert.equal(ENTERPRISE_BREAKPOINTS_2026.xsMax, 480);
+  assert.equal(ENTERPRISE_BREAKPOINTS_2026.ultraWideMin, 1536);
+
+  const mobileXs = resolveEnterpriseViewportTier(375, 812);
+  assert.equal(mobileXs.tier, 'xs');
+  assert.equal(mobileXs.navigationMode, 'mobile-drawer');
+  assert.equal(mobileXs.catalogColumns, 1);
+  assert.equal(mobileXs.kpiColumns, 1);
+  assert.equal(mobileXs.checkoutStepperColumns, 1);
+  assert.ok(mobileXs.heroCameraDistanceMultiplier > 1.1);
+
+  const phabletSm = resolveEnterpriseViewportTier(640, 960);
+  assert.equal(phabletSm.tier, 'sm');
+  assert.equal(phabletSm.navigationMode, 'mobile-drawer');
+  assert.equal(phabletSm.kpiColumns, 2);
+  assert.equal(phabletSm.checkoutStepperColumns, 1);
+
+  const tabletMd = resolveEnterpriseViewportTier(768, 1024);
+  assert.equal(tabletMd.tier, 'md');
+  assert.equal(tabletMd.navigationMode, 'mobile-drawer');
+  assert.equal(tabletMd.catalogColumns, 2);
+  assert.equal(tabletMd.checkoutStepperColumns, 3);
+
+  const laptopLg = resolveEnterpriseViewportTier(1024, 768);
+  assert.equal(laptopLg.tier, 'lg');
+  assert.equal(laptopLg.navigationMode, 'desktop-inline');
+  assert.equal(laptopLg.catalogColumns, 2);
+  assert.equal(laptopLg.kpiColumns, 4);
+
+  const desktopXl = resolveEnterpriseViewportTier(1440, 900);
+  assert.equal(desktopXl.tier, 'xl');
+  assert.equal(desktopXl.navigationMode, 'desktop-inline');
+  assert.equal(desktopXl.catalogColumns, 3);
+  assert.equal(desktopXl.kpiColumns, 4);
+
+  const desk2xl = resolveEnterpriseViewportTier(1920, 1080);
+  assert.equal(desk2xl.tier, '2xl');
+  assert.equal(desk2xl.catalogColumns, 3);
+  assert.equal(desk2xl.heroCanvasHeightPx, 360);
+});
+
+test('SupportTicketing messaging thread, lifecycle progress, and client status summary helpers work end-to-end', () => {
+  const baseTicket: SupportTicketRecord = {
+    id: 'tkt-9041',
+    ticketNumber: 'TKT-9041',
+    customerName: 'Marcus Vance',
+    customerEmail: 'marcus.vance@apexquant.io',
+    tradingViewUsername: 'MarcusVance_ES',
+    platformTarget: 'TradingView',
+    category: 'TradingView ACL Sync',
+    priority: 'Critical',
+    status: 'Open',
+    subject: 'Sub-account Pine v6 Invite-Only ACL whitelist propagation',
+    description: 'Requesting immediate Invite-Only ACL sync verification on @MarcusVance_ES.',
+    licenseKey: 'SE-BUND-8841-A9C2',
+    adminResolutionNote: 'Assigned to Quant Engineering Desk for ACL ping.',
+    createdAt: '2026-10-31 14:12:00 UTC',
+    updatedAt: '2026-10-31 14:12:00 UTC',
+  };
+
+  const initialThread = buildDefaultTicketMessages(baseTicket);
+  assert.equal(initialThread.length, 3);
+  assert.equal(initialThread[0].senderRole, 'client');
+  assert.equal(initialThread[1].senderRole, 'system');
+  assert.equal(initialThread[2].senderRole, 'engineer');
+
+  const invalidMsg = SupportTicketMessageSchema.safeParse({
+    ticketId: 'tkt-9041',
+    senderRole: 'client',
+    senderName: 'Marcus Vance',
+    body: 'hi',
+  });
+  assert.equal(invalidMsg.success, false);
+
+  const validMsg = SupportTicketMessageSchema.safeParse({
+    ticketId: 'tkt-9041',
+    senderRole: 'engineer',
+    senderName: 'Dr. Julian Vance',
+    senderHandleOrTitle: 'Senior Quant Engineer',
+    body: 'Confirmed Pine Script v6 ACL whitelist propagation on @MarcusVance_ES. Please reload chart with Shift+F5.',
+    diagnosticSnippet: 'ACL_STATUS=200_OK_PROVISIONED',
+  });
+  assert.equal(validMsg.success, true);
+
+  if (validMsg.success) {
+    const updatedTicket = appendTicketMessage(
+      baseTicket,
+      validMsg.data,
+      '2026-11-01 09:45:00 UTC'
+    );
+    assert.equal(updatedTicket.status, 'In Progress');
+    assert.equal(updatedTicket.messages?.length, 4);
+    assert.equal(updatedTicket.updatedAt, '2026-11-01 09:45:00 UTC');
+
+    const progress = computeTicketLifecycleProgress(updatedTicket.status, updatedTicket.priority);
+    assert.equal(progress.currentStageIndex, 2);
+    assert.equal(progress.completionPct, 66);
+    assert.equal(progress.stages[1].active, true);
+
+    const summary = computeClientTicketStatusSummary(
+      [updatedTicket],
+      'marcus.vance@apexquant.io'
+    );
+    assert.equal(summary.total, 1);
+    assert.equal(summary.inProgress, 1);
+    assert.equal(summary.criticalActive, 1);
+    assert.equal(summary.totalMessages, 4);
+  }
+});
+
 
 
 

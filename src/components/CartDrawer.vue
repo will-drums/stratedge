@@ -141,21 +141,7 @@ async function submitCartCheckout() {
     data-testid="cart-drawer"
     @click.self="store.isCartDrawerOpen = false"
   >
-    <div
-      style="
-        width: 100%;
-        max-width: 560px;
-        height: 100vh;
-        overflow-y: auto;
-        background: var(--bg-surface);
-        border-left: 1px solid var(--border-hairline);
-        padding: 28px 24px;
-        display: flex;
-        flex-direction: column;
-        justify-content: space-between;
-        gap: 24px;
-      "
-    >
+    <div class="cart-drawer-panel">
       <div>
         <!-- Drawer Header -->
         <div
@@ -199,13 +185,7 @@ async function submitCartCheckout() {
 
         <!-- 3-Step Drawer Progress Bar -->
         <div
-          style="
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 8px;
-            margin-top: 16px;
-            margin-bottom: 16px;
-          "
+          class="cart-drawer-stepper-grid"
           data-testid="cart-drawer-stepper"
         >
           <button
