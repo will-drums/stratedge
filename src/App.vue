@@ -174,6 +174,64 @@ onMounted(() => {
       </div>
     </header>
 
+    <!-- Customizable Enterprise Announcement & Promo Bar -->
+    <div
+      v-if="store.platformSettings.announcementEnabled"
+      data-testid="enterprise-announcement-bar"
+      style="
+        background: linear-gradient(90deg, rgba(16, 185, 129, 0.14), rgba(56, 189, 248, 0.12));
+        border-bottom: 1px solid rgba(16, 185, 129, 0.28);
+        padding: 8px 24px;
+      "
+    >
+      <div
+        class="container"
+        style="
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 16px;
+          flex-wrap: wrap;
+          font-size: 0.8125rem;
+        "
+      >
+        <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+          <span
+            class="mono"
+            style="
+              color: var(--accent-emerald-bright);
+              font-weight: 700;
+              text-transform: uppercase;
+              letter-spacing: 0.08em;
+            "
+          >
+            LIVE DESK NOTICE
+          </span>
+          <span style="color: var(--text-primary);">
+            {{ store.platformSettings.announcementBannerText }}
+          </span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <span class="mono" style="color: var(--accent-amber);">
+            Code: <strong>{{ store.platformSettings.announcementPromoCode }}</strong> ({{
+              store.platformSettings.announcementDiscountPct
+            }}% Off)
+          </span>
+          <button
+            type="button"
+            class="btn-ghost"
+            style="padding: 4px 10px; min-height: 26px; font-size: 0.75rem;"
+            @click="
+              store.cartCouponCode = store.platformSettings.announcementPromoCode;
+              setView('checkout');
+            "
+          >
+            Apply Code &amp; Checkout →
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- Live Fulfillment Notification Banner -->
     <div
       v-if="store.notificationBanner"

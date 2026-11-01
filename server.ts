@@ -69,6 +69,104 @@ async function startServer() {
     res.json({ indicators: formatted });
   });
 
+  // Enterprise Customizable Platform & Storefront Settings
+  let platformSettings = {
+    announcementEnabled: true,
+    announcementBannerText:
+      'Q2 Institutional Release: StratEdge Algo v5.4 Pine v6 & thinkorswim Study Suite Live — Take 15% Off Prop Desk & Annual Licenses',
+    announcementPromoCode: 'PROP15',
+    announcementDiscountPct: 15,
+    featuredIndicatorId: 'se-institutional-bundle',
+    supportEmail: 'desk-ops@stratedgealgo.com',
+    discordWebhookUrl: 'https://discord.com/api/webhooks/stratedge-desk-ops',
+    requireStrictTvHandleVerification: true,
+    watermarkTosDownloads: true,
+  };
+
+  function buildSalesReport(allLicenses = db.select().from(licensesTable).all()) {
+    const indicators = db.select().from(indicatorsTable).all();
+    const totalRevenue = allLicenses.reduce((acc, item) => acc + item.amountPaid, 0);
+    const activeProvisioned = allLicenses.filter(
+      (l) => l.tvAccessStatus === 'Provisioned'
+    ).length;
+    const totalTosDownloads = allLicenses.reduce(
+      (acc, item) => acc + item.tosDownloadCount,
+      0
+    );
+    const mrr = allLicenses.reduce((acc, lic) => {
+      if (lic.tvAccessStatus === 'Revoked') return acc;
+      if (lic.billingCycle === 'Monthly') return acc + lic.amountPaid;
+      if (lic.billingCycle === 'Annual') return acc + Math.round(lic.amountPaid / 12);
+      return acc;
+    }, 0);
+
+    const productBreakdown = indicators.map((ind) => {
+      const matching = allLicenses.filter((l) => l.indicatorId === ind.id);
+      const grossRevenue = matching.reduce((acc, l) => acc + l.amountPaid, 0);
+      const activeSeats = matching.filter((l) => l.tvAccessStatus === 'Provisioned').length;
+      const tosDownloads = matching.reduce((acc, l) => acc + l.tosDownloadCount, 0);
+      const revenueSharePct =
+        totalRevenue > 0 ? Math.round((grossRevenue / totalRevenue) * 1000) / 10 : 0;
+      return {
+        indicatorId: ind.id,
+        indicatorName: ind.name,
+        category: ind.category,
+        version: ind.version,
+        unitsSold: matching.length,
+        activeSeats,
+        grossRevenue,
+        revenueSharePct,
+        tosDownloads,
+      };
+    }).sort((a, b) => b.grossRevenue - a.grossRevenue);
+
+    const tiers: Array<'Monthly' | 'Annual' | 'Lifetime'> = ['Monthly', 'Annual', 'Lifetime'];
+    const tierBreakdown = tiers.map((tier) => {
+      const matching = allLicenses.filter((l) => l.billingCycle === tier);
+      const grossRevenue = matching.reduce((acc, l) => acc + l.amountPaid, 0);
+      const sharePct =
+        totalRevenue > 0 ? Math.round((grossRevenue / totalRevenue) * 1000) / 10 : 0;
+      return {
+        tier,
+        licensesCount: matching.length,
+        grossRevenue,
+        sharePct,
+      };
+    });
+
+    const averageOrderValue =
+      allLicenses.length > 0 ? Math.round(totalRevenue / allLicenses.length) : 0;
+    const arrRunRate = mrr * 12;
+
+    const monthlyCohortSeries = [
+      { month: 'Nov', grossRevenue: 3180, mrr: 620, orders: 3 },
+      { month: 'Dec', grossRevenue: 4470, mrr: 840, orders: 4 },
+      { month: 'Jan', grossRevenue: 5890, mrr: 990, orders: 5 },
+      { month: 'Feb', grossRevenue: 7120, mrr: 1120, orders: 6 },
+      { month: 'Mar', grossRevenue: 8490, mrr: 1290, orders: 7 },
+      {
+        month: 'Apr (Live)',
+        grossRevenue: totalRevenue,
+        mrr,
+        orders: allLicenses.length,
+      },
+    ];
+
+    return {
+      totalRevenue,
+      mrr,
+      arrRunRate,
+      averageOrderValue,
+      totalLicenses: allLicenses.length,
+      activeProvisioned,
+      totalTosDownloads,
+      netRetentionPct: 98.4,
+      productBreakdown,
+      tierBreakdown,
+      monthlyCohortSeries,
+    };
+  }
+
   // 2. GET current session profile & customer licenses + admin telemetry + users directory
   app.get('/api/dashboard', (req, res) => {
     const emailFilter = (req.query.email as string) || '';
@@ -114,12 +212,16 @@ async function startServer() {
       return acc;
     }, 0);
 
+    const salesReport = buildSalesReport(allLicenses);
+
     res.json({
       currentUser,
       allUsers,
       customerLicenses,
       allLicenses,
       webhookLogs,
+      platformSettings,
+      salesReport,
       metrics: {
         totalRevenue,
         mrr,
@@ -962,18 +1064,32 @@ async function startServer() {
   app.post('/api/admin/update-indicator', (req, res) => {
     const {
       indicatorId,
+      name,
+      tagline,
+      category,
       priceMonthly,
       priceAnnual,
       priceLifetime,
       version,
       winRatePct,
+      profitFactor,
+      sharpeRatio,
+      markets,
+      timeframes,
     } = req.body as {
       indicatorId?: string;
+      name?: string;
+      tagline?: string;
+      category?: string;
       priceMonthly?: number;
       priceAnnual?: number;
       priceLifetime?: number;
       version?: string;
       winRatePct?: number;
+      profitFactor?: number;
+      sharpeRatio?: number;
+      markets?: string;
+      timeframes?: string;
     };
 
     if (!indicatorId) {
@@ -994,6 +1110,9 @@ async function startServer() {
 
     db.update(indicatorsTable)
       .set({
+        name: name?.trim() || existing.name,
+        tagline: tagline?.trim() || existing.tagline,
+        category: category?.trim() || existing.category,
         priceMonthly:
           typeof priceMonthly === 'number' && priceMonthly > 0
             ? priceMonthly
@@ -1011,6 +1130,16 @@ async function startServer() {
           typeof winRatePct === 'number' && winRatePct > 0
             ? winRatePct
             : existing.winRatePct,
+        profitFactor:
+          typeof profitFactor === 'number' && profitFactor > 0
+            ? profitFactor
+            : existing.profitFactor,
+        sharpeRatio:
+          typeof sharpeRatio === 'number' && sharpeRatio > 0
+            ? sharpeRatio
+            : existing.sharpeRatio,
+        markets: markets?.trim() || existing.markets,
+        timeframes: timeframes?.trim() || existing.timeframes,
       })
       .where(eq(indicatorsTable.id, indicatorId))
       .run();
@@ -1021,9 +1150,246 @@ async function startServer() {
       .where(eq(indicatorsTable.id, indicatorId))
       .get();
 
+    const nowIso = new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+    db.insert(webhookLogsTable)
+      .values({
+        id: `wh-${Date.now()}`,
+        eventType: 'admin.catalog.updated',
+        licenseKey: updated?.id.toUpperCase() || 'CATALOG',
+        customerEmail: 'admin@stratedgealgo.com',
+        tradingViewUsername: 'StratEdge_Admin',
+        platformTarget: 'Storefront Product Catalog & Pricing Engine',
+        status: '200 OK — Published',
+        latencyMs: 38,
+        payloadSummary: `Updated ${updated?.name}: $${updated?.priceMonthly}/mo · $${updated?.priceAnnual}/yr · $${updated?.priceLifetime} life (${updated?.version})`,
+        createdAt: nowIso,
+      })
+      .run();
+
     res.json({
-      message: `Updated pricing & release spec for ${existing.name}`,
+      message: `Updated pricing & release spec for ${updated?.name}`,
       indicator: updated,
+    });
+  });
+
+  // 9. POST /api/admin/create-indicator - Add a brand-new indicator for sale to SQLite Catalog
+  app.post('/api/admin/create-indicator', (req, res) => {
+    const {
+      name,
+      tagline,
+      category,
+      priceMonthly,
+      priceAnnual,
+      priceLifetime,
+      winRatePct,
+      profitFactor,
+      sharpeRatio,
+      maxDrawdownPct,
+      signalsPerDay,
+      timeframes,
+      markets,
+      version,
+      description,
+      thinkScriptCode,
+      pineScriptPreview,
+    } = req.body as Record<string, unknown>;
+
+    const cleanName = typeof name === 'string' ? name.trim() : '';
+    if (!cleanName || cleanName.length < 3) {
+      res.status(400).json({ error: 'Indicator name must be at least 3 characters.' });
+      return;
+    }
+
+    const slug = cleanName
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '');
+    const id = `se-${slug}-${Math.floor(100 + Math.random() * 900)}`;
+    const studySafeName = cleanName.replace(/[^a-zA-Z0-9]/g, '');
+    const tosCode = Math.random().toString(36).substring(2, 9).toUpperCase();
+
+    const newIndicator = {
+      id,
+      slug,
+      name: cleanName,
+      tagline:
+        typeof tagline === 'string' && tagline.trim()
+          ? tagline.trim()
+          : 'Institutional Quantitative Execution & Microstructure Model',
+      category:
+        typeof category === 'string' && category.trim()
+          ? category.trim()
+          : 'Gamma Exposure & Dealer Positioning',
+      platforms: JSON.stringify(['TradingView', 'thinkorswim']),
+      priceMonthly: Number(priceMonthly) > 0 ? Number(priceMonthly) : 199,
+      priceAnnual: Number(priceAnnual) > 0 ? Number(priceAnnual) : 1490,
+      priceLifetime: Number(priceLifetime) > 0 ? Number(priceLifetime) : 2490,
+      winRatePct: Number(winRatePct) > 0 ? Number(winRatePct) : 77.5,
+      profitFactor: Number(profitFactor) > 0 ? Number(profitFactor) : 2.85,
+      sharpeRatio: Number(sharpeRatio) > 0 ? Number(sharpeRatio) : 3.15,
+      maxDrawdownPct: Number(maxDrawdownPct) > 0 ? Number(maxDrawdownPct) : 4.1,
+      signalsPerDay:
+        typeof signalsPerDay === 'string' && signalsPerDay.trim()
+          ? signalsPerDay.trim()
+          : '3 - 6 High-Conviction Setups / Session',
+      timeframes:
+        typeof timeframes === 'string' && timeframes.trim()
+          ? timeframes.trim()
+          : '1m, 5m, 15m, 1H, 4H, Daily',
+      markets:
+        typeof markets === 'string' && markets.trim()
+          ? markets.trim()
+          : 'ES, NQ, SPX, QQQ, NVDA, TSLA, CL, GC',
+      version:
+        typeof version === 'string' && version.trim() ? version.trim() : 'v5.4.0',
+      tosShareLink: `http://tos.mx/${tosCode}`,
+      tosStudyFilename: `StratEdge_${studySafeName}_v54.ts`,
+      tvScriptId: `PUB;stratedge_${slug.replace(/-/g, '_')}_v54`,
+      description:
+        typeof description === 'string' && description.trim()
+          ? description.trim()
+          : `${cleanName} combines non-repainting institutional order-flow telemetry with dynamic volatility-normalized execution levels for TradingView Pine Script v6 and Charles Schwab thinkorswim.`,
+      thinkScriptCode:
+        typeof thinkScriptCode === 'string' && thinkScriptCode.trim()
+          ? thinkScriptCode.trim()
+          : `# StratEdge Algo — ${cleanName}\n# Charles Schwab thinkorswim Study\ndeclare upper;\ninput sensitivity = 2.25;\ndef vwapBasis = reference VWAP();\nplot InstitutionalLevel = vwapBasis;\nInstitutionalLevel.SetDefaultColor(Color.UPTICK);`,
+      pineScriptPreview:
+        typeof pineScriptPreview === 'string' && pineScriptPreview.trim()
+          ? pineScriptPreview.trim()
+          : `//@version=6\nindicator("${cleanName} [Institutional]", overlay=true)\nfloat basis = ta.vwap(hlc3)\nplot(basis, "Institutional Anchor", color=color.new(#10B981, 0), linewidth=2)`,
+    };
+
+    db.insert(indicatorsTable).values(newIndicator).run();
+
+    const nowIso = new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+    db.insert(webhookLogsTable)
+      .values({
+        id: `wh-${Date.now()}`,
+        eventType: 'admin.catalog.created',
+        licenseKey: id.toUpperCase(),
+        customerEmail: 'admin@stratedgealgo.com',
+        tradingViewUsername: 'StratEdge_Admin',
+        platformTarget: 'Storefront Catalog + TV/TOS Fulfillment Vault',
+        status: '201 Created — Live on Storefront',
+        latencyMs: 49,
+        payloadSummary: `Created new indicator for sale: ${cleanName} ($${newIndicator.priceMonthly}/mo · $${newIndicator.priceAnnual}/yr · $${newIndicator.priceLifetime} life)`,
+        createdAt: nowIso,
+      })
+      .run();
+
+    res.status(201).json({
+      message: `${cleanName} created and published live to the Storefront!`,
+      indicator: {
+        ...newIndicator,
+        platforms: ['TradingView', 'thinkorswim'],
+      },
+    });
+  });
+
+  // 10. POST /api/admin/delete-indicator - Remove custom indicator from storefront catalog
+  app.post('/api/admin/delete-indicator', (req, res) => {
+    const { indicatorId } = req.body as { indicatorId?: string };
+    if (!indicatorId) {
+      res.status(400).json({ error: 'indicatorId is required' });
+      return;
+    }
+
+    const allIndicators = db.select().from(indicatorsTable).all();
+    if (allIndicators.length <= 3) {
+      res.status(400).json({
+        error: 'Cannot delete core Trinity indicators when 3 or fewer products remain.',
+      });
+      return;
+    }
+
+    const existing = allIndicators.find((i) => i.id === indicatorId);
+    if (!existing) {
+      res.status(404).json({ error: 'Indicator not found' });
+      return;
+    }
+
+    db.delete(indicatorsTable).where(eq(indicatorsTable.id, indicatorId)).run();
+
+    res.json({
+      message: `Removed ${existing.name} from active Storefront catalog.`,
+      deletedId: indicatorId,
+    });
+  });
+
+  // 11. GET /api/admin/sales-report - Full Enterprise Sales Report & Revenue Breakdown
+  app.get('/api/admin/sales-report', (_req, res) => {
+    const report = buildSalesReport();
+    res.json(report);
+  });
+
+  // 12. GET & POST /api/admin/settings - Customizable Platform & Storefront Configuration
+  app.get('/api/admin/settings', (_req, res) => {
+    res.json({ settings: platformSettings });
+  });
+
+  app.post('/api/admin/settings', (req, res) => {
+    const body = req.body as Partial<typeof platformSettings>;
+    platformSettings = {
+      ...platformSettings,
+      announcementEnabled:
+        typeof body.announcementEnabled === 'boolean'
+          ? body.announcementEnabled
+          : platformSettings.announcementEnabled,
+      announcementBannerText:
+        typeof body.announcementBannerText === 'string' && body.announcementBannerText.trim()
+          ? body.announcementBannerText.trim()
+          : platformSettings.announcementBannerText,
+      announcementPromoCode:
+        typeof body.announcementPromoCode === 'string' && body.announcementPromoCode.trim()
+          ? body.announcementPromoCode.trim().toUpperCase()
+          : platformSettings.announcementPromoCode,
+      announcementDiscountPct:
+        typeof body.announcementDiscountPct === 'number' &&
+        body.announcementDiscountPct >= 0 &&
+        body.announcementDiscountPct <= 90
+          ? body.announcementDiscountPct
+          : platformSettings.announcementDiscountPct,
+      featuredIndicatorId:
+        typeof body.featuredIndicatorId === 'string' && body.featuredIndicatorId.trim()
+          ? body.featuredIndicatorId.trim()
+          : platformSettings.featuredIndicatorId,
+      supportEmail:
+        typeof body.supportEmail === 'string' && body.supportEmail.trim()
+          ? body.supportEmail.trim()
+          : platformSettings.supportEmail,
+      discordWebhookUrl:
+        typeof body.discordWebhookUrl === 'string' && body.discordWebhookUrl.trim()
+          ? body.discordWebhookUrl.trim()
+          : platformSettings.discordWebhookUrl,
+      requireStrictTvHandleVerification:
+        typeof body.requireStrictTvHandleVerification === 'boolean'
+          ? body.requireStrictTvHandleVerification
+          : platformSettings.requireStrictTvHandleVerification,
+      watermarkTosDownloads:
+        typeof body.watermarkTosDownloads === 'boolean'
+          ? body.watermarkTosDownloads
+          : platformSettings.watermarkTosDownloads,
+    };
+
+    const nowIso = new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+    db.insert(webhookLogsTable)
+      .values({
+        id: `wh-${Date.now()}`,
+        eventType: 'admin.settings.customized',
+        licenseKey: 'PLATFORM-CONFIG',
+        customerEmail: 'admin@stratedgealgo.com',
+        tradingViewUsername: 'StratEdge_Admin',
+        platformTarget: 'Storefront Global Config & Promo Engine',
+        status: '200 OK — Synced',
+        latencyMs: 29,
+        payloadSummary: `Updated platform config: Promo ${platformSettings.announcementPromoCode} (${platformSettings.announcementDiscountPct}% off) · Banner ${platformSettings.announcementEnabled ? 'Enabled' : 'Hidden'}`,
+        createdAt: nowIso,
+      })
+      .run();
+
+    res.json({
+      message: 'Enterprise platform & storefront customization saved live.',
+      settings: platformSettings,
     });
   });
 

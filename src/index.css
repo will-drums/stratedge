@@ -830,13 +830,48 @@ button {
 .testimonial-card {
   background: var(--surface-gradient);
   border: 1px solid var(--border-hairline);
+  border-top: 3px solid var(--accent-emerald);
   border-radius: var(--radius-outer);
   box-shadow: var(--shadow-card);
   padding: 24px;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  gap: 16px;
+  gap: 18px;
+  will-change: transform, opacity;
+  transition:
+    transform 200ms var(--ease-out),
+    border-color 200ms var(--ease-out),
+    box-shadow 200ms var(--ease-out);
+}
+
+.testimonial-card.accent-sky {
+  border-top-color: var(--accent-sky);
+}
+
+.testimonial-card.accent-amber {
+  border-top-color: var(--accent-amber);
+}
+
+.testimonial-card:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-card-hover);
+}
+
+.trader-avatar-monogram {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-inner);
+  background: linear-gradient(135deg, #16243d 0%, #0d1628 100%);
+  border: 1px solid rgba(52, 211, 153, 0.35);
+  color: var(--accent-emerald-bright);
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
 }
 
 /* Quiet Footer */

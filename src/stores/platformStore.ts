@@ -79,6 +79,58 @@ export interface DashboardMetrics {
   totalCustomers: number;
 }
 
+export interface ProductSalesBreakdown {
+  indicatorId: string;
+  indicatorName: string;
+  category: string;
+  version: string;
+  unitsSold: number;
+  activeSeats: number;
+  grossRevenue: number;
+  revenueSharePct: number;
+  tosDownloads: number;
+}
+
+export interface TierSalesBreakdown {
+  tier: 'Monthly' | 'Annual' | 'Lifetime';
+  licensesCount: number;
+  grossRevenue: number;
+  sharePct: number;
+}
+
+export interface MonthlyCohortPoint {
+  month: string;
+  grossRevenue: number;
+  mrr: number;
+  orders: number;
+}
+
+export interface SalesReportData {
+  totalRevenue: number;
+  mrr: number;
+  arrRunRate: number;
+  averageOrderValue: number;
+  totalLicenses: number;
+  activeProvisioned: number;
+  totalTosDownloads: number;
+  netRetentionPct: number;
+  productBreakdown: ProductSalesBreakdown[];
+  tierBreakdown: TierSalesBreakdown[];
+  monthlyCohortSeries: MonthlyCohortPoint[];
+}
+
+export interface PlatformSettings {
+  announcementEnabled: boolean;
+  announcementBannerText: string;
+  announcementPromoCode: string;
+  announcementDiscountPct: number;
+  featuredIndicatorId: string;
+  supportEmail: string;
+  discordWebhookUrl: string;
+  requireStrictTvHandleVerification: boolean;
+  watermarkTosDownloads: boolean;
+}
+
 export interface CartItem {
   indicatorId: string;
   billingCycle: 'Monthly' | 'Annual' | 'Lifetime';
@@ -97,6 +149,33 @@ export const usePlatformStore = defineStore('platform', () => {
     activeProvisioned: 0,
     totalTosDownloads: 0,
     totalCustomers: 0,
+  });
+
+  const salesReport = ref<SalesReportData>({
+    totalRevenue: 0,
+    mrr: 0,
+    arrRunRate: 0,
+    averageOrderValue: 0,
+    totalLicenses: 0,
+    activeProvisioned: 0,
+    totalTosDownloads: 0,
+    netRetentionPct: 98.4,
+    productBreakdown: [],
+    tierBreakdown: [],
+    monthlyCohortSeries: [],
+  });
+
+  const platformSettings = ref<PlatformSettings>({
+    announcementEnabled: true,
+    announcementBannerText:
+      'Q2 Institutional Release: StratEdge Algo v5.4 Pine v6 & thinkorswim Study Suite Live — Take 15% Off Prop Desk & Annual Licenses',
+    announcementPromoCode: 'PROP15',
+    announcementDiscountPct: 15,
+    featuredIndicatorId: 'se-institutional-bundle',
+    supportEmail: 'desk-ops@stratedgealgo.com',
+    discordWebhookUrl: 'https://discord.com/api/webhooks/stratedge-desk-ops',
+    requireStrictTvHandleVerification: true,
+    watermarkTosDownloads: true,
   });
 
   const loading = ref(false);
@@ -278,6 +357,12 @@ export const usePlatformStore = defineStore('platform', () => {
           totalTosDownloads: 0,
           totalCustomers: 0,
         };
+        if (dashData.salesReport) {
+          salesReport.value = dashData.salesReport;
+        }
+        if (dashData.platformSettings) {
+          platformSettings.value = dashData.platformSettings;
+        }
       }
     } finally {
       loading.value = false;
@@ -323,6 +408,8 @@ export const usePlatformStore = defineStore('platform', () => {
     allUsers,
     webhookLogs,
     metrics,
+    salesReport,
+    platformSettings,
     loading,
     isAuthenticated,
     activeCustomerEmail,

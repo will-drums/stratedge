@@ -17,6 +17,7 @@ import {
   calculateOrderPricing,
 } from '../utils/fulfillment';
 import Quant3DSurface from './Quant3DSurface.vue';
+import TestimonialsSection from './TestimonialsSection.vue';
 
 const emit = defineEmits<{
   (e: 'navigate', view: 'storefront' | 'checkout' | 'dashboard' | 'admin'): void;
@@ -1152,12 +1153,15 @@ function selectIndicatorForCheckout(
       </div>
     </section>
 
+    <!-- 6B. DEDICATED SOCIAL PROOF & TRADER TESTIMONIALS SECTION -->
+    <TestimonialsSection @select-setup="selectIndicatorForCheckout" />
+
     <!-- 7. TANSTACK FORM + ZOD: INSTANT AUTOMATED CHECKOUT & DELIVERY -->
     <section id="instant-checkout" ref="checkoutSectionRef" class="section-block">
       <div class="container">
         <div class="section-header">
           <div>
-            <h2 class="section-title">06. Instant License Checkout &amp; Automated Provisioning</h2>
+            <h2 class="section-title">07. Instant License Checkout &amp; Automated Provisioning</h2>
             <p class="section-subtitle">
               Validated end-to-end with TanStack Form and Zod. Completing this order immediately
               provisions your license in the SQLite + Drizzle database and redirects you to your
