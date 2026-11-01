@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   CheckoutFormSchema,
+  SecureCheckoutPaymentSchema,
   TradingViewUsernameSchema,
   calculateOrderPricing,
   generateDeterministicLicenseKey,
@@ -57,6 +58,42 @@ test('CheckoutFormSchema validates complete institutional order payload', () => 
     couponCode: 'INSTITUTIONAL15',
   });
   assert.equal(result.success, true);
+});
+
+test('SecureCheckoutPaymentSchema validates payment card details and rejects invalid CVC or expiry', () => {
+  const validPayment = SecureCheckoutPaymentSchema.safeParse({
+    customerName: 'Marcus Vance',
+    customerEmail: 'marcus.vance@apexquant.io',
+    tradingViewUsername: 'MarcusVance_ES',
+    thinkorswimAccountId: 'TOS-994182',
+    indicatorId: 'se-algo-gamma',
+    billingCycle: 'Annual',
+    couponCode: 'PROP15',
+    paymentMethod: 'Card',
+    cardholderName: 'Marcus Vance',
+    cardNumber: '4242 4242 4242 4242',
+    cardExpiry: '08/29',
+    cardCvc: '842',
+    billingZip: '10005',
+    acceptTerms: true,
+  });
+  assert.equal(validPayment.success, true);
+
+  const invalidCard = SecureCheckoutPaymentSchema.safeParse({
+    customerName: 'Marcus Vance',
+    customerEmail: 'marcus.vance@apexquant.io',
+    tradingViewUsername: 'MarcusVance_ES',
+    indicatorId: 'se-algo-gamma',
+    billingCycle: 'Annual',
+    paymentMethod: 'Card',
+    cardholderName: 'Marcus Vance',
+    cardNumber: '123',
+    cardExpiry: '19/99',
+    cardCvc: '12',
+    billingZip: '10005',
+    acceptTerms: false,
+  });
+  assert.equal(invalidCard.success, false);
 });
 
 test('generateThinkScriptArtifact embeds customer license watermark and ThinkScript body', () => {

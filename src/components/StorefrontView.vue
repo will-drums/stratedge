@@ -19,7 +19,7 @@ import {
 import Quant3DSurface from './Quant3DSurface.vue';
 
 const emit = defineEmits<{
-  (e: 'navigate', view: 'storefront' | 'dashboard' | 'admin'): void;
+  (e: 'navigate', view: 'storefront' | 'checkout' | 'dashboard' | 'admin'): void;
 }>();
 
 const store = usePlatformStore();
@@ -360,7 +360,7 @@ function selectIndicatorForCheckout(
   } else {
     store.selectedBillingCycle = billingCadencePreview.value;
   }
-  checkoutSectionRef.value?.scrollIntoView({ behavior: 'smooth' });
+  emit('navigate', 'checkout');
 }
 </script>
 

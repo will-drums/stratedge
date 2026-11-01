@@ -3,16 +3,20 @@ import { ref, onMounted, computed } from 'vue';
 import { useHead, useSeoMeta } from '@unhead/vue';
 import { usePlatformStore } from './stores/platformStore';
 import StorefrontView from './components/StorefrontView.vue';
+import CheckoutView from './components/CheckoutView.vue';
 import DashboardView from './components/DashboardView.vue';
 import AdminFulfillmentView from './components/AdminFulfillmentView.vue';
 import AuthModal from './components/AuthModal.vue';
 import CartDrawer from './components/CartDrawer.vue';
 
 const store = usePlatformStore();
-const activeView = ref<'storefront' | 'dashboard' | 'admin'>('storefront');
+const activeView = ref<'storefront' | 'checkout' | 'dashboard' | 'admin'>('storefront');
 
 // Reactive Unhead SEO Metadata (@unhead/vue) matching exact StratEdge Algo brand table
 const seoTitle = computed(() => {
+  if (activeView.value === 'checkout') {
+    return 'Secure License Checkout & Instant Provisioning — StratEdge Algo';
+  }
   if (activeView.value === 'dashboard') {
     return 'Customer Dashboard, Memberships & Downloads — StratEdge Algo';
   }
@@ -23,6 +27,9 @@ const seoTitle = computed(() => {
 });
 
 const seoDescription = computed(() => {
+  if (activeView.value === 'checkout') {
+    return 'Complete your StratEdge Algo indicator order with Zod-validated checkout and instant TradingView + Charles Schwab thinkorswim license provisioning.';
+  }
   if (activeView.value === 'dashboard') {
     return 'Manage your StratEdge Algo memberships, active indicator subscriptions, TradingView Invite-Only handles, and Charles Schwab thinkorswim .ts study downloads.';
   }
@@ -30,6 +37,7 @@ const seoDescription = computed(() => {
 });
 
 const canonicalUrl = computed(() => {
+  if (activeView.value === 'checkout') return 'https://stratedgealgo.com/checkout';
   if (activeView.value === 'dashboard') return 'https://stratedgealgo.com/dashboard';
   if (activeView.value === 'admin') return 'https://stratedgealgo.com/admin';
   return 'https://stratedgealgo.com/';
@@ -57,7 +65,10 @@ useHead({
   ],
 });
 
-function setView(view: 'storefront' | 'dashboard' | 'admin', hashAnchor?: string) {
+function setView(
+  view: 'storefront' | 'checkout' | 'dashboard' | 'admin',
+  hashAnchor?: string
+) {
   activeView.value = view;
   if (view === 'storefront' && hashAnchor) {
     setTimeout(() => {
@@ -106,11 +117,13 @@ onMounted(() => {
             Memberships
           </a>
           <a
-            href="#backtest-matrix"
+            href="#checkout"
             class="topbar-link"
-            @click.prevent="setView('storefront', '#backtest-matrix')"
+            :class="{ active: activeView === 'checkout' }"
+            data-testid="nav-checkout-view"
+            @click.prevent="setView('checkout')"
           >
-            Backtests
+            Checkout
           </a>
           <a
             href="#customer-portal"
@@ -193,6 +206,10 @@ onMounted(() => {
         v-if="activeView === 'storefront'"
         @navigate="setView"
       />
+      <CheckoutView
+        v-else-if="activeView === 'checkout'"
+        @navigate="setView"
+      />
       <DashboardView
         v-else-if="activeView === 'dashboard'"
         @navigate="setView"
@@ -232,6 +249,15 @@ onMounted(() => {
             @click="store.openAuthModal('login')"
           >
             Member Login / Register
+          </button>
+          <span class="meta-sep" aria-hidden="true">·</span>
+          <button
+            type="button"
+            class="btn-ghost"
+            style="padding: 4px 10px; min-height: 28px;"
+            @click="setView('checkout')"
+          >
+            Secure Checkout
           </button>
           <span class="meta-sep" aria-hidden="true">·</span>
           <button

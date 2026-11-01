@@ -26,6 +26,43 @@ export const CheckoutFormSchema = z.object({
 
 export type CheckoutFormInput = z.infer<typeof CheckoutFormSchema>;
 
+export const SecureCheckoutPaymentSchema = CheckoutFormSchema.extend({
+  paymentMethod: z.enum(['Card', 'Wire', 'USDC']).default('Card'),
+  cardholderName: z.string().trim().min(2, 'Cardholder name is required'),
+  cardNumber: z
+    .string()
+    .trim()
+    .refine(
+      (val) => {
+        const digits = val.replace(/[\s-]/g, '');
+        return /^\d{12,19}$/.test(digits);
+      },
+      { message: 'Enter a valid 12 to 19 digit card number' }
+    ),
+  cardExpiry: z
+    .string()
+    .trim()
+    .regex(
+      /^(0[1-9]|1[0-2])\/\d{2}$/,
+      'Expiration must be in MM/YY format (e.g. 08/29)'
+    ),
+  cardCvc: z
+    .string()
+    .trim()
+    .regex(/^\d{3,4}$/, 'Security CVC must be 3 or 4 digits'),
+  billingZip: z
+    .string()
+    .trim()
+    .min(3, 'Billing postal / ZIP code is required'),
+  acceptTerms: z
+    .boolean()
+    .refine((val) => val === true, {
+      message: 'You must accept the institutional license & non-redistribution terms',
+    }),
+});
+
+export type SecureCheckoutPaymentInput = z.infer<typeof SecureCheckoutPaymentSchema>;
+
 export const TvSyncSchema = z.object({
   licenseId: z.string().min(1, 'License ID is required'),
   tradingViewUsername: TradingViewUsernameSchema,
@@ -60,10 +97,14 @@ export function calculateOrderPricing(
 
   const normalizedCoupon = couponCode.trim().toUpperCase();
   let discountPct = 0;
-  if (normalizedCoupon === 'INSTITUTIONAL15') {
+  if (normalizedCoupon === 'INSTITUTIONAL15' || normalizedCoupon === 'PROP15') {
     discountPct = 15;
-  } else if (normalizedCoupon === 'DESK20') {
+  } else if (normalizedCoupon === 'DESK20' || normalizedCoupon === 'ALPHA20') {
     discountPct = 20;
+  } else if (normalizedCoupon === 'TRINITY25') {
+    discountPct = 25;
+  } else if (normalizedCoupon === 'FOUNDER50') {
+    discountPct = 50;
   } else if (normalizedCoupon === 'PROP10') {
     discountPct = 10;
   }
