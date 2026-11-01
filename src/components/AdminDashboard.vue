@@ -25,8 +25,12 @@ import {
 } from '../stores/platformStore';
 import {
   AdminProvisionSchema,
+  SupportTicketSchema,
+  type SupportTicketRecord,
   buildDailyRevenueGrowthSeries,
+  computeRevenuePeriodMetrics,
   computeCustomerLicenseDistribution,
+  filterSupportTickets,
 } from '../utils/fulfillment';
 import { DailyRevenueRechartsMount } from '../utils/rechartsMount';
 
@@ -36,44 +40,95 @@ const emit = defineEmits<{
 
 const store = usePlatformStore();
 
-// Admin Dashboard 6-Tab Enterprise Navigation
+// Admin Dashboard 7-Tab Enterprise Navigation
 const activeAdminTab = ref<
-  'sales' | 'catalog' | 'licenses' | 'customers' | 'customization' | 'webhooks'
+  | 'sales'
+  | 'tickets'
+  | 'catalog'
+  | 'licenses'
+  | 'customers'
+  | 'customization'
+  | 'webhooks'
 >('sales');
 
 // ============================================================================
-// 1. DAILY REVENUE GROWTH CHART (RECHARTS)
+// 1. DAILY REVENUE GROWTH CHART (RECHARTS) WITH INTERACTIVE TIME-RANGE FILTERING
 // ============================================================================
-const revenueRangeDays = ref<14 | 30>(14);
-const revenueChartMode = ref<'combined' | 'daily'>('combined');
+const revenueRangeDays = ref<7 | 14 | 30 | 90 | 180>(14);
+const revenueStartDate = ref('');
+const revenueEndDate = ref('');
+const revenueTierSlice = ref<'All' | 'Monthly' | 'Annual' | 'Lifetime'>('All');
+const revenueIndicatorSlice = ref('All');
+const revenueChartMode = ref<'combined' | 'daily' | 'cumulative'>('combined');
+const showMovingAverage = ref(true);
+const enableBrushZoom = ref(false);
 const rechartsContainerRef = ref<HTMLElement | null>(null);
 const rechartsMounter = new DailyRevenueRechartsMount();
 
-const dailyRevenueSeries = computed(() =>
-  buildDailyRevenueGrowthSeries(store.allLicenses, revenueRangeDays.value)
+function selectPresetRange(days: 7 | 14 | 30 | 90 | 180) {
+  revenueRangeDays.value = days;
+  revenueStartDate.value = '';
+  revenueEndDate.value = '';
+  if (days >= 90) {
+    enableBrushZoom.value = true;
+  }
+}
+
+function resetRevenueFilters() {
+  revenueRangeDays.value = 14;
+  revenueStartDate.value = '';
+  revenueEndDate.value = '';
+  revenueTierSlice.value = 'All';
+  revenueIndicatorSlice.value = 'All';
+  revenueChartMode.value = 'combined';
+  showMovingAverage.value = true;
+  enableBrushZoom.value = false;
+}
+
+const hasActiveCustomRevenueFilter = computed(
+  () =>
+    Boolean(revenueStartDate.value) ||
+    Boolean(revenueEndDate.value) ||
+    revenueTierSlice.value !== 'All' ||
+    revenueIndicatorSlice.value !== 'All'
+);
+
+const dailyRevenueSeries = computed(() => {
+  // When custom dates are set, generate a 180-day historical horizon so custom date slices have full data
+  const baseHorizon =
+    revenueStartDate.value || revenueEndDate.value
+      ? Math.max(revenueRangeDays.value, 180)
+      : revenueRangeDays.value;
+
+  return buildDailyRevenueGrowthSeries(store.allLicenses, baseHorizon, {
+    startDate: revenueStartDate.value,
+    endDate: revenueEndDate.value,
+    billingCycle: revenueTierSlice.value,
+    indicatorId: revenueIndicatorSlice.value,
+  });
+});
+
+const periodRevenueMetrics = computed(() =>
+  computeRevenuePeriodMetrics(dailyRevenueSeries.value)
 );
 
 const dailyRevenueHighlights = computed(() => {
-  const series = dailyRevenueSeries.value;
-  if (!series.length) {
-    return {
-      latestDaily: 0,
-      peakDaily: 0,
-      periodGrowthPct: 0,
-      cumulativeTotal: 0,
-    };
-  }
-  const first = series[0].dailyRevenue;
-  const last = series[series.length - 1].dailyRevenue;
-  const peak = Math.max(...series.map((p) => p.dailyRevenue));
-  const growth =
-    first > 0 ? Number((((last - first) / first) * 100).toFixed(1)) : 0;
-
+  const m = periodRevenueMetrics.value;
   return {
-    latestDaily: last,
-    peakDaily: peak,
-    periodGrowthPct: growth,
-    cumulativeTotal: series[series.length - 1].cumulativeRevenue,
+    latestDaily: m.latestDailyRevenue,
+    averageDaily: m.averageDailyRevenue,
+    peakDaily: m.peakDailyRevenue,
+    peakDateLabel: m.peakDateLabel,
+    periodGrowthPct: m.periodGrowthPct,
+    cumulativeTotal: m.periodTotalRevenue,
+    totalOrders: m.totalOrders,
+    daysInPeriod: m.daysInPeriod,
+    activeWindowLabel:
+      dailyRevenueSeries.value.length > 0
+        ? `${dailyRevenueSeries.value[0].dateLabel} → ${
+            dailyRevenueSeries.value[dailyRevenueSeries.value.length - 1].dateLabel
+          }`
+        : '—',
   };
 });
 
@@ -82,6 +137,8 @@ function syncRechartsView() {
     rechartsMounter.mount(rechartsContainerRef.value, {
       data: dailyRevenueSeries.value,
       chartMode: revenueChartMode.value,
+      showMovingAverage: showMovingAverage.value,
+      enableBrush: enableBrushZoom.value,
     });
   } else {
     rechartsMounter.unmount();
@@ -89,7 +146,13 @@ function syncRechartsView() {
 }
 
 watch(
-  [activeAdminTab, dailyRevenueSeries, revenueChartMode],
+  [
+    activeAdminTab,
+    dailyRevenueSeries,
+    revenueChartMode,
+    showMovingAverage,
+    enableBrushZoom,
+  ],
   async () => {
     await nextTick();
     syncRechartsView();
@@ -577,6 +640,188 @@ const adminProvisionForm = useForm({
     }
   },
 });
+
+// ============================================================================
+// SUPPORT TICKETS MANAGEMENT & DESK ESCALATION WORKFLOW
+// ============================================================================
+const ticketStatusFilter = ref<'All' | 'Open' | 'In Progress' | 'Resolved'>('All');
+const ticketPriorityFilter = ref<'All' | 'Critical' | 'High' | 'Normal'>('All');
+const ticketSearchQuery = ref('');
+
+const filteredTickets = computed(() =>
+  filterSupportTickets(store.supportTickets, {
+    status: ticketStatusFilter.value,
+    priority: ticketPriorityFilter.value,
+    searchQuery: ticketSearchQuery.value,
+  })
+);
+
+const ticketSummaryCounts = computed(() => {
+  const all = store.supportTickets;
+  return {
+    total: all.length,
+    open: all.filter((t) => t.status === 'Open').length,
+    inProgress: all.filter((t) => t.status === 'In Progress').length,
+    resolved: all.filter((t) => t.status === 'Resolved').length,
+    criticalActive: all.filter(
+      (t) => t.priority === 'Critical' && t.status !== 'Resolved'
+    ).length,
+  };
+});
+
+const selectedTicketId = ref<string>('tkt-9041');
+const selectedTicket = computed<SupportTicketRecord | null>(() => {
+  return (
+    store.supportTickets.find((t) => t.id === selectedTicketId.value) ||
+    filteredTickets.value[0] ||
+    store.supportTickets[0] ||
+    null
+  );
+});
+
+const ticketUpdateForm = reactive<{
+  status: 'Open' | 'In Progress' | 'Resolved';
+  priority: 'Critical' | 'High' | 'Normal';
+  adminResolutionNote: string;
+}>({
+  status: 'Open',
+  priority: 'Critical',
+  adminResolutionNote: '',
+});
+
+watch(
+  selectedTicket,
+  (tkt) => {
+    if (tkt) {
+      ticketUpdateForm.status = tkt.status;
+      ticketUpdateForm.priority = tkt.priority;
+      ticketUpdateForm.adminResolutionNote = tkt.adminResolutionNote || '';
+    }
+  },
+  { immediate: true }
+);
+
+function selectTicketForInspection(tkt: SupportTicketRecord) {
+  selectedTicketId.value = tkt.id;
+  ticketUpdateForm.status = tkt.status;
+  ticketUpdateForm.priority = tkt.priority;
+  ticketUpdateForm.adminResolutionNote = tkt.adminResolutionNote || '';
+}
+
+const savingTicketUpdate = ref(false);
+
+async function handleUpdateTicketStatus(
+  tkt: SupportTicketRecord,
+  nextStatus?: 'Open' | 'In Progress' | 'Resolved'
+) {
+  savingTicketUpdate.value = true;
+  try {
+    const payload = {
+      ticketId: tkt.id,
+      status: nextStatus || ticketUpdateForm.status,
+      priority:
+        tkt.id === selectedTicket.value?.id
+          ? ticketUpdateForm.priority
+          : tkt.priority,
+      adminResolutionNote:
+        tkt.id === selectedTicket.value?.id
+          ? ticketUpdateForm.adminResolutionNote
+          : tkt.adminResolutionNote,
+    };
+
+    const res = await fetch('/api/admin/tickets/update', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data.tickets)) {
+        store.supportTickets = data.tickets;
+      } else {
+        await store.fetchAllData();
+      }
+      store.showNotification(
+        'success',
+        `Support Ticket ${tkt.ticketNumber} Updated`,
+        `Status set to ${payload.status} (${payload.priority} Priority).`
+      );
+    }
+  } finally {
+    savingTicketUpdate.value = false;
+  }
+}
+
+const newTicketForm = reactive({
+  customerName: '',
+  customerEmail: '',
+  tradingViewUsername: '',
+  platformTarget: 'TradingView' as 'TradingView' | 'thinkorswim' | 'Dual-Platform',
+  category: 'TradingView ACL Sync' as
+    | 'TradingView ACL Sync'
+    | 'thinkorswim Study Import'
+    | 'License Key Re-binding'
+    | 'Prop Desk Billing'
+    | 'Webhook / Alert Setup',
+  priority: 'High' as 'Critical' | 'High' | 'Normal',
+  licenseKey: '',
+  subject: '',
+  description: '',
+});
+
+const creatingTicket = ref(false);
+const createTicketError = ref('');
+
+async function handleCreateSupportTicket() {
+  createTicketError.value = '';
+  const parsed = SupportTicketSchema.safeParse(newTicketForm);
+  if (!parsed.success) {
+    createTicketError.value =
+      parsed.error.issues[0]?.message ||
+      'Please complete all required support ticket fields.';
+    return;
+  }
+
+  creatingTicket.value = true;
+  try {
+    const res = await fetch('/api/admin/tickets', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(parsed.data),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      createTicketError.value = data.error || 'Failed to create support ticket.';
+      return;
+    }
+
+    if (Array.isArray(data.tickets)) {
+      store.supportTickets = data.tickets;
+    } else {
+      await store.fetchAllData();
+    }
+
+    if (data.ticket?.id) {
+      selectedTicketId.value = data.ticket.id;
+    }
+
+    store.showNotification(
+      'success',
+      `Created Ticket ${data.ticket.ticketNumber}`,
+      `Assigned to ${data.ticket.platformTarget} Support Queue (${data.ticket.priority}).`
+    );
+
+    newTicketForm.customerName = '';
+    newTicketForm.customerEmail = '';
+    newTicketForm.tradingViewUsername = '';
+    newTicketForm.licenseKey = '';
+    newTicketForm.subject = '';
+    newTicketForm.description = '';
+  } finally {
+    creatingTicket.value = false;
+  }
+}
 </script>
 
 <template>
@@ -609,6 +854,14 @@ const adminProvisionForm = useForm({
             @click="exportSalesReportCsv"
           >
             Export Sales CSV (.csv)
+          </button>
+          <button
+            type="button"
+            class="btn-secondary"
+            data-testid="quick-open-tickets-btn"
+            @click="activeAdminTab = 'tickets'"
+          >
+            Support Desk ({{ ticketSummaryCounts.open }} Open)
           </button>
           <button
             type="button"
@@ -655,12 +908,12 @@ const adminProvisionForm = useForm({
           <span class="kpi-number">{{ store.metrics.totalTosDownloads }}</span>
           <span class="kpi-label">thinkorswim .ts Artifacts Pulled</span>
           <span class="kpi-context">
-            {{ store.indicators.length }} active indicators in catalog
+            {{ store.indicators.length }} active indicators · {{ ticketSummaryCounts.open }} open tickets
           </span>
         </div>
       </div>
 
-      <!-- Admin 6-Tab Sub-Navigation -->
+      <!-- Admin 7-Tab Sub-Navigation -->
       <div
         style="
           display: flex;
@@ -684,11 +937,20 @@ const adminProvisionForm = useForm({
           <button
             type="button"
             class="segmented-btn"
+            :class="{ active: activeAdminTab === 'tickets' }"
+            data-testid="admin-tab-tickets"
+            @click="activeAdminTab = 'tickets'"
+          >
+            2. Support Tickets ({{ store.supportTickets.length }})
+          </button>
+          <button
+            type="button"
+            class="segmented-btn"
             :class="{ active: activeAdminTab === 'catalog' }"
             data-testid="admin-tab-catalog"
             @click="activeAdminTab = 'catalog'"
           >
-            2. Add &amp; Edit Indicators ({{ store.indicators.length }})
+            3. Add &amp; Edit Indicators ({{ store.indicators.length }})
           </button>
           <button
             type="button"
@@ -697,7 +959,7 @@ const adminProvisionForm = useForm({
             data-testid="admin-tab-licenses"
             @click="activeAdminTab = 'licenses'"
           >
-            3. Licenses &amp; Desk Provisioning ({{ store.allLicenses.length }})
+            4. Licenses &amp; Desk Provisioning ({{ store.allLicenses.length }})
           </button>
           <button
             type="button"
@@ -706,7 +968,7 @@ const adminProvisionForm = useForm({
             data-testid="admin-tab-customers"
             @click="activeAdminTab = 'customers'"
           >
-            4. Customers &amp; Memberships ({{ store.allUsers.length }})
+            5. Customers &amp; Memberships ({{ store.allUsers.length }})
           </button>
           <button
             type="button"
@@ -715,7 +977,7 @@ const adminProvisionForm = useForm({
             data-testid="admin-tab-customization"
             @click="activeAdminTab = 'customization'"
           >
-            5. Storefront &amp; Promo Customization
+            6. Storefront &amp; Promo Customization
           </button>
           <button
             type="button"
@@ -724,7 +986,7 @@ const adminProvisionForm = useForm({
             data-testid="admin-tab-webhooks"
             @click="activeAdminTab = 'webhooks'"
           >
-            6. Webhook Audit Ledger ({{ store.webhookLogs.length }})
+            7. Webhook Audit Ledger ({{ store.webhookLogs.length }})
           </button>
         </div>
       </div>
@@ -745,7 +1007,7 @@ const adminProvisionForm = useForm({
               justify-content: space-between;
               align-items: flex-start;
               gap: 16px;
-              margin-bottom: 18px;
+              margin-bottom: 16px;
               flex-wrap: wrap;
             "
           >
@@ -753,7 +1015,7 @@ const adminProvisionForm = useForm({
               <div class="meta-line">
                 <span class="meta-accent">Recharts Financial Time-Series Engine</span>
                 <span class="meta-sep" aria-hidden="true">·</span>
-                <span>Daily Revenue &amp; Cumulative Growth Trajectory</span>
+                <span>Interactive Historical Sales &amp; Cumulative Growth Trajectory</span>
               </div>
               <h2
                 style="
@@ -763,34 +1025,79 @@ const adminProvisionForm = useForm({
                   margin-top: 4px;
                 "
               >
-                Daily Revenue Growth ({{ revenueRangeDays }}-Day Window)
+                Daily Revenue Growth ({{ dailyRevenueHighlights.daysInPeriod }}-Day Historical Window)
               </h2>
               <p style="font-size: 0.85rem; color: var(--text-secondary); margin-top: 2px;">
-                Visualizing daily sales inflow and cumulative e-commerce revenue progression across
-                TradingView and thinkorswim indicator checkouts.
+                Filter historical sales inflow by preset horizon (7D–180D), custom calendar dates,
+                billing tier, or indicator model. Active window:
+                <strong class="mono" style="color: var(--accent-emerald-bright);">
+                  {{ dailyRevenueHighlights.activeWindowLabel }}
+                </strong>
               </p>
             </div>
 
             <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
-              <!-- Window Range Selector -->
+              <!-- Preset Time-Range Selector (7D, 14D, 30D, 90D, 180D) -->
               <div class="segmented-group" aria-label="Revenue Timeframe Window">
                 <button
                   type="button"
                   class="segmented-btn"
-                  :class="{ active: revenueRangeDays === 14 }"
+                  :class="{
+                    active:
+                      revenueRangeDays === 7 && !revenueStartDate && !revenueEndDate,
+                  }"
+                  data-testid="recharts-range-7d"
+                  @click="selectPresetRange(7)"
+                >
+                  7D
+                </button>
+                <button
+                  type="button"
+                  class="segmented-btn"
+                  :class="{
+                    active:
+                      revenueRangeDays === 14 && !revenueStartDate && !revenueEndDate,
+                  }"
                   data-testid="recharts-range-14d"
-                  @click="revenueRangeDays = 14"
+                  @click="selectPresetRange(14)"
                 >
                   14 Days
                 </button>
                 <button
                   type="button"
                   class="segmented-btn"
-                  :class="{ active: revenueRangeDays === 30 }"
+                  :class="{
+                    active:
+                      revenueRangeDays === 30 && !revenueStartDate && !revenueEndDate,
+                  }"
                   data-testid="recharts-range-30d"
-                  @click="revenueRangeDays = 30"
+                  @click="selectPresetRange(30)"
                 >
                   30 Days
+                </button>
+                <button
+                  type="button"
+                  class="segmented-btn"
+                  :class="{
+                    active:
+                      revenueRangeDays === 90 && !revenueStartDate && !revenueEndDate,
+                  }"
+                  data-testid="recharts-range-90d"
+                  @click="selectPresetRange(90)"
+                >
+                  90D (Quarter)
+                </button>
+                <button
+                  type="button"
+                  class="segmented-btn"
+                  :class="{
+                    active:
+                      revenueRangeDays === 180 && !revenueStartDate && !revenueEndDate,
+                  }"
+                  data-testid="recharts-range-180d"
+                  @click="selectPresetRange(180)"
+                >
+                  180D (6M)
                 </button>
               </div>
 
@@ -814,6 +1121,15 @@ const adminProvisionForm = useForm({
                 >
                   Daily Bars Only
                 </button>
+                <button
+                  type="button"
+                  class="segmented-btn"
+                  :class="{ active: revenueChartMode === 'cumulative' }"
+                  data-testid="recharts-mode-cumulative"
+                  @click="revenueChartMode = 'cumulative'"
+                >
+                  Cumulative Curve
+                </button>
               </div>
 
               <button
@@ -827,16 +1143,181 @@ const adminProvisionForm = useForm({
             </div>
           </div>
 
+          <!-- Interactive Date-Range & Cohort Slice Filter Bar -->
+          <div
+            data-testid="recharts-interactive-filter-bar"
+            style="
+              display: flex;
+              align-items: flex-end;
+              justify-content: space-between;
+              gap: 12px;
+              flex-wrap: wrap;
+              padding: 12px 14px;
+              margin-bottom: 18px;
+              background: rgba(5, 8, 16, 0.65);
+              border: 1px solid var(--border-subtle);
+              border-radius: var(--radius-md);
+            "
+          >
+            <div style="display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap;">
+              <div>
+                <label
+                  for="recharts-start-date-input"
+                  style="
+                    display: block;
+                    font-size: 0.72rem;
+                    color: var(--text-muted);
+                    margin-bottom: 4px;
+                  "
+                >
+                  Custom Start Date
+                </label>
+                <input
+                  id="recharts-start-date-input"
+                  v-model="revenueStartDate"
+                  type="date"
+                  min="2026-05-05"
+                  max="2026-10-31"
+                  class="form-input mono"
+                  data-testid="recharts-start-date"
+                  style="min-height: 34px; padding: 4px 10px; font-size: 0.78rem; width: 148px;"
+                />
+              </div>
+
+              <div>
+                <label
+                  for="recharts-end-date-input"
+                  style="
+                    display: block;
+                    font-size: 0.72rem;
+                    color: var(--text-muted);
+                    margin-bottom: 4px;
+                  "
+                >
+                  Custom End Date
+                </label>
+                <input
+                  id="recharts-end-date-input"
+                  v-model="revenueEndDate"
+                  type="date"
+                  min="2026-05-05"
+                  max="2026-10-31"
+                  class="form-input mono"
+                  data-testid="recharts-end-date"
+                  style="min-height: 34px; padding: 4px 10px; font-size: 0.78rem; width: 148px;"
+                />
+              </div>
+
+              <div>
+                <label
+                  for="recharts-tier-filter-select"
+                  style="
+                    display: block;
+                    font-size: 0.72rem;
+                    color: var(--text-muted);
+                    margin-bottom: 4px;
+                  "
+                >
+                  License Tier Slice
+                </label>
+                <select
+                  id="recharts-tier-filter-select"
+                  v-model="revenueTierSlice"
+                  class="form-select"
+                  data-testid="recharts-tier-filter"
+                  style="min-height: 34px; padding: 4px 10px; font-size: 0.78rem; width: 145px;"
+                >
+                  <option value="All">All Tiers</option>
+                  <option value="Lifetime">Lifetime Only</option>
+                  <option value="Annual">Annual Only</option>
+                  <option value="Monthly">Monthly Only</option>
+                </select>
+              </div>
+
+              <div>
+                <label
+                  for="recharts-indicator-filter-select"
+                  style="
+                    display: block;
+                    font-size: 0.72rem;
+                    color: var(--text-muted);
+                    margin-bottom: 4px;
+                  "
+                >
+                  Indicator Model Slice
+                </label>
+                <select
+                  id="recharts-indicator-filter-select"
+                  v-model="revenueIndicatorSlice"
+                  class="form-select"
+                  data-testid="recharts-indicator-filter"
+                  style="min-height: 34px; padding: 4px 10px; font-size: 0.78rem; width: 205px;"
+                >
+                  <option value="All">All Storefront Indicators</option>
+                  <option v-for="ind in store.indicators" :key="ind.id" :value="ind.id">
+                    {{ ind.name }}
+                  </option>
+                </select>
+              </div>
+            </div>
+
+            <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+              <button
+                type="button"
+                class="btn-ghost"
+                data-testid="recharts-toggle-ma"
+                :style="{
+                  minHeight: '34px',
+                  padding: '4px 10px',
+                  fontSize: '0.76rem',
+                  borderColor: showMovingAverage ? 'rgba(245, 158, 11, 0.5)' : undefined,
+                  color: showMovingAverage ? 'var(--accent-amber)' : undefined,
+                }"
+                @click="showMovingAverage = !showMovingAverage"
+              >
+                {{ showMovingAverage ? '7D Avg Line: ON' : '7D Avg Line: OFF' }}
+              </button>
+
+              <button
+                type="button"
+                class="btn-ghost"
+                data-testid="recharts-toggle-brush"
+                :style="{
+                  minHeight: '34px',
+                  padding: '4px 10px',
+                  fontSize: '0.76rem',
+                  borderColor: enableBrushZoom ? 'rgba(16, 185, 129, 0.5)' : undefined,
+                  color: enableBrushZoom ? 'var(--accent-emerald-bright)' : undefined,
+                }"
+                @click="enableBrushZoom = !enableBrushZoom"
+              >
+                {{ enableBrushZoom ? 'Timeline Brush: ON' : 'Timeline Brush: OFF' }}
+              </button>
+
+              <button
+                v-if="hasActiveCustomRevenueFilter || revenueRangeDays !== 14"
+                type="button"
+                class="btn-ghost"
+                data-testid="recharts-reset-filter"
+                style="min-height: 34px; padding: 4px 10px; font-size: 0.76rem;"
+                @click="resetRevenueFilters"
+              >
+                Reset Range
+              </button>
+            </div>
+          </div>
+
           <!-- Daily Revenue Telemetry Callouts -->
           <div
             style="
               display: grid;
-              grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+              grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
               gap: 14px;
               margin-bottom: 18px;
             "
           >
             <div
+              data-testid="recharts-kpi-latest"
               style="
                 background: rgba(5, 8, 16, 0.72);
                 border: 1px solid var(--border-subtle);
@@ -861,6 +1342,7 @@ const adminProvisionForm = useForm({
             </div>
 
             <div
+              data-testid="recharts-kpi-avg"
               style="
                 background: rgba(5, 8, 16, 0.72);
                 border: 1px solid var(--border-subtle);
@@ -869,7 +1351,32 @@ const adminProvisionForm = useForm({
               "
             >
               <div style="font-size: 0.75rem; color: var(--text-muted);">
-                Peak Daily Sales Volume
+                Avg Daily Revenue ({{ dailyRevenueHighlights.daysInPeriod }}d)
+              </div>
+              <div
+                class="mono"
+                style="
+                  font-size: 1.25rem;
+                  font-weight: 700;
+                  color: var(--accent-amber);
+                  margin-top: 4px;
+                "
+              >
+                ${{ dailyRevenueHighlights.averageDaily.toLocaleString() }}
+              </div>
+            </div>
+
+            <div
+              data-testid="recharts-kpi-peak"
+              style="
+                background: rgba(5, 8, 16, 0.72);
+                border: 1px solid var(--border-subtle);
+                border-radius: var(--radius-md);
+                padding: 12px 16px;
+              "
+            >
+              <div style="font-size: 0.75rem; color: var(--text-muted);">
+                Peak Daily Sales ({{ dailyRevenueHighlights.peakDateLabel }})
               </div>
               <div
                 class="mono"
@@ -885,6 +1392,7 @@ const adminProvisionForm = useForm({
             </div>
 
             <div
+              data-testid="recharts-kpi-growth"
               style="
                 background: rgba(5, 8, 16, 0.72);
                 border: 1px solid var(--border-subtle);
@@ -893,7 +1401,7 @@ const adminProvisionForm = useForm({
               "
             >
               <div style="font-size: 0.75rem; color: var(--text-muted);">
-                Daily Revenue Growth ({{ revenueRangeDays }}d)
+                Daily Revenue Growth ({{ dailyRevenueHighlights.daysInPeriod }}d)
               </div>
               <div
                 class="mono"
@@ -911,6 +1419,7 @@ const adminProvisionForm = useForm({
             </div>
 
             <div
+              data-testid="recharts-kpi-cumulative"
               style="
                 background: rgba(5, 8, 16, 0.72);
                 border: 1px solid var(--border-subtle);
@@ -919,7 +1428,7 @@ const adminProvisionForm = useForm({
               "
             >
               <div style="font-size: 0.75rem; color: var(--text-muted);">
-                Cumulative Period Revenue
+                Cumulative Period Revenue ({{ dailyRevenueHighlights.totalOrders }} orders)
               </div>
               <div
                 class="mono"
@@ -939,14 +1448,14 @@ const adminProvisionForm = useForm({
           <div
             ref="rechartsContainerRef"
             data-testid="daily-revenue-recharts-container"
-            style="
-              width: 100%;
-              height: 290px;
-              background: rgba(5, 8, 16, 0.82);
-              border: 1px solid var(--border-subtle);
-              border-radius: var(--radius-md);
-              padding: 12px 12px 4px 4px;
-            "
+            :style="{
+              width: '100%',
+              height: enableBrushZoom ? '320px' : '290px',
+              background: 'rgba(5, 8, 16, 0.82)',
+              border: '1px solid var(--border-subtle)',
+              borderRadius: 'var(--radius-md)',
+              padding: '12px 12px 4px 4px',
+            }"
           ></div>
         </div>
 
@@ -1355,6 +1864,640 @@ const adminProvisionForm = useForm({
               </tr>
             </tfoot>
           </table>
+        </div>
+      </div>
+
+      <!-- ======================================================================= -->
+      <!-- SUPPORT TICKETS & INSTITUTIONAL DESK ESCALATION QUEUE                   -->
+      <!-- Rendered both in Tab 1 (Executive Overview) and Tab 2 (Support Tickets) -->
+      <!-- ======================================================================= -->
+      <div
+        v-if="activeAdminTab === 'sales' || activeAdminTab === 'tickets'"
+        data-testid="support-tickets-section"
+        style="margin-top: 32px; margin-bottom: 32px;"
+      >
+        <div class="form-panel" style="margin-bottom: 24px;">
+          <div
+            style="
+              display: flex;
+              justify-content: space-between;
+              align-items: flex-start;
+              gap: 16px;
+              margin-bottom: 18px;
+              flex-wrap: wrap;
+            "
+          >
+            <div>
+              <div class="meta-line">
+                <span class="meta-accent">Institutional Trader Support &amp; SLA Queue</span>
+                <span class="meta-sep" aria-hidden="true">·</span>
+                <span>TradingView ACL · thinkorswim Study Import · Prop Desk Billing</span>
+              </div>
+              <h2
+                style="
+                  font-family: var(--font-display);
+                  font-size: 1.35rem;
+                  font-weight: 700;
+                  margin-top: 4px;
+                "
+              >
+                Support Tickets &amp; Technical Fulfillment Desk
+              </h2>
+              <p style="font-size: 0.85rem; color: var(--text-secondary); margin-top: 2px;">
+                Track, triage, and resolve customer support tickets across TradingView Invite-Only
+                ACL syncs, Charles Schwab thinkorswim `.ts` study imports, and license re-bindings.
+              </p>
+            </div>
+
+            <!-- Support Ticket SLA Summary Strip -->
+            <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+              <div
+                style="
+                  background: rgba(5, 8, 16, 0.72);
+                  border: 1px solid var(--border-subtle);
+                  border-radius: var(--radius-md);
+                  padding: 8px 14px;
+                "
+              >
+                <div style="font-size: 0.72rem; color: var(--text-muted);">Open Queue</div>
+                <div
+                  class="mono"
+                  data-testid="support-tickets-open-count"
+                  style="font-size: 1.1rem; font-weight: 700; color: var(--accent-amber);"
+                >
+                  {{ ticketSummaryCounts.open }}
+                </div>
+              </div>
+
+              <div
+                style="
+                  background: rgba(5, 8, 16, 0.72);
+                  border: 1px solid var(--border-subtle);
+                  border-radius: var(--radius-md);
+                  padding: 8px 14px;
+                "
+              >
+                <div style="font-size: 0.72rem; color: var(--text-muted);">In Progress</div>
+                <div
+                  class="mono"
+                  data-testid="support-tickets-progress-count"
+                  style="font-size: 1.1rem; font-weight: 700; color: var(--accent-sky);"
+                >
+                  {{ ticketSummaryCounts.inProgress }}
+                </div>
+              </div>
+
+              <div
+                style="
+                  background: rgba(5, 8, 16, 0.72);
+                  border: 1px solid var(--border-subtle);
+                  border-radius: var(--radius-md);
+                  padding: 8px 14px;
+                "
+              >
+                <div style="font-size: 0.72rem; color: var(--text-muted);">Resolved</div>
+                <div
+                  class="mono"
+                  data-testid="support-tickets-resolved-count"
+                  style="font-size: 1.1rem; font-weight: 700; color: var(--accent-emerald-bright);"
+                >
+                  {{ ticketSummaryCounts.resolved }}
+                </div>
+              </div>
+
+              <div
+                style="
+                  background: rgba(5, 8, 16, 0.72);
+                  border: 1px solid var(--border-subtle);
+                  border-radius: var(--radius-md);
+                  padding: 8px 14px;
+                "
+              >
+                <div style="font-size: 0.72rem; color: var(--text-muted);">Critical Active</div>
+                <div
+                  class="mono"
+                  style="font-size: 1.1rem; font-weight: 700; color: var(--accent-crimson);"
+                >
+                  {{ ticketSummaryCounts.criticalActive }}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Ticket Filter & Search Toolbar -->
+          <div
+            style="
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+              gap: 12px;
+              margin-bottom: 16px;
+              flex-wrap: wrap;
+            "
+          >
+            <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+              <div class="segmented-group" aria-label="Filter Tickets by Status">
+                <button
+                  type="button"
+                  class="segmented-btn"
+                  :class="{ active: ticketStatusFilter === 'All' }"
+                  data-testid="ticket-filter-status-all"
+                  @click="ticketStatusFilter = 'All'"
+                >
+                  All ({{ store.supportTickets.length }})
+                </button>
+                <button
+                  type="button"
+                  class="segmented-btn"
+                  :class="{ active: ticketStatusFilter === 'Open' }"
+                  data-testid="ticket-filter-status-open"
+                  @click="ticketStatusFilter = 'Open'"
+                >
+                  Open ({{ ticketSummaryCounts.open }})
+                </button>
+                <button
+                  type="button"
+                  class="segmented-btn"
+                  :class="{ active: ticketStatusFilter === 'In Progress' }"
+                  data-testid="ticket-filter-status-progress"
+                  @click="ticketStatusFilter = 'In Progress'"
+                >
+                  In Progress ({{ ticketSummaryCounts.inProgress }})
+                </button>
+                <button
+                  type="button"
+                  class="segmented-btn"
+                  :class="{ active: ticketStatusFilter === 'Resolved' }"
+                  data-testid="ticket-filter-status-resolved"
+                  @click="ticketStatusFilter = 'Resolved'"
+                >
+                  Resolved ({{ ticketSummaryCounts.resolved }})
+                </button>
+              </div>
+
+              <select
+                v-model="ticketPriorityFilter"
+                class="form-select"
+                aria-label="Filter Tickets by Priority"
+                data-testid="ticket-filter-priority"
+                style="min-height: 36px; padding: 6px 12px; font-size: 0.8rem; width: 165px;"
+              >
+                <option value="All">All Priorities</option>
+                <option value="Critical">Critical Priority</option>
+                <option value="High">High Priority</option>
+                <option value="Normal">Normal Priority</option>
+              </select>
+            </div>
+
+            <div style="max-width: 320px; width: 100%;">
+              <input
+                v-model="ticketSearchQuery"
+                type="search"
+                class="search-input"
+                aria-label="Search support tickets"
+                data-testid="ticket-search-input"
+                placeholder="Search TKT-#, trader, @handle, license..."
+              />
+            </div>
+          </div>
+
+          <!-- Support Tickets Table -->
+          <div class="table-wrapper" data-testid="support-tickets-table">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Ticket #</th>
+                  <th>Priority</th>
+                  <th>Status</th>
+                  <th>Trader &amp; Handle</th>
+                  <th>Platform &amp; Category</th>
+                  <th>Subject &amp; License Reference</th>
+                  <th>Desk Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="tkt in filteredTickets"
+                  :key="tkt.id"
+                  :data-testid="`ticket-row-${tkt.ticketNumber}`"
+                  :style="{
+                    background:
+                      selectedTicket?.id === tkt.id
+                        ? 'rgba(16, 185, 129, 0.06)'
+                        : undefined,
+                  }"
+                >
+                  <td class="mono" style="font-weight: 700; color: var(--text-primary);">
+                    {{ tkt.ticketNumber }}
+                  </td>
+                  <td class="mono">
+                    <span
+                      :style="{
+                        color:
+                          tkt.priority === 'Critical'
+                            ? 'var(--accent-crimson)'
+                            : tkt.priority === 'High'
+                            ? 'var(--accent-amber)'
+                            : 'var(--text-secondary)',
+                        fontWeight: 600,
+                      }"
+                    >
+                      {{ tkt.priority }}
+                    </span>
+                  </td>
+                  <td class="mono">
+                    <span
+                      :style="{
+                        color:
+                          tkt.status === 'Resolved'
+                            ? 'var(--accent-emerald-bright)'
+                            : tkt.status === 'In Progress'
+                            ? 'var(--accent-sky)'
+                            : 'var(--accent-amber)',
+                        fontWeight: 600,
+                      }"
+                    >
+                      {{ tkt.status }}
+                    </span>
+                  </td>
+                  <td>
+                    <div style="font-weight: 600; color: var(--text-primary);">
+                      {{ tkt.customerName }}
+                    </div>
+                    <div class="mono" style="font-size: 0.74rem; color: var(--text-muted);">
+                      @{{ tkt.tradingViewUsername }} · {{ tkt.customerEmail }}
+                    </div>
+                  </td>
+                  <td>
+                    <div style="font-weight: 600; color: var(--text-primary);">
+                      {{ tkt.category }}
+                    </div>
+                    <div class="mono" style="font-size: 0.74rem; color: var(--accent-sky);">
+                      {{ tkt.platformTarget }}
+                    </div>
+                  </td>
+                  <td>
+                    <div style="font-weight: 600; color: var(--text-primary);">
+                      {{ tkt.subject }}
+                    </div>
+                    <div class="mono" style="font-size: 0.73rem; color: var(--text-muted);">
+                      License: {{ tkt.licenseKey || 'N/A' }} · {{ tkt.createdAt }}
+                    </div>
+                    <div
+                      v-if="tkt.adminResolutionNote"
+                      style="
+                        font-size: 0.76rem;
+                        color: var(--accent-emerald-bright);
+                        margin-top: 3px;
+                      "
+                    >
+                      Desk Note: {{ tkt.adminResolutionNote }}
+                    </div>
+                  </td>
+                  <td>
+                    <div style="display: flex; gap: 6px; flex-wrap: nowrap;">
+                      <button
+                        type="button"
+                        class="btn-ghost"
+                        style="padding: 4px 10px; min-height: 28px; font-size: 0.74rem;"
+                        :data-testid="`inspect-ticket-btn-${tkt.ticketNumber}`"
+                        @click="selectTicketForInspection(tkt)"
+                      >
+                        Inspect / Reply
+                      </button>
+                      <button
+                        v-if="tkt.status !== 'Resolved'"
+                        type="button"
+                        class="btn-ghost"
+                        style="
+                          padding: 4px 10px;
+                          min-height: 28px;
+                          font-size: 0.74rem;
+                          color: var(--accent-emerald-bright);
+                        "
+                        :data-testid="`resolve-ticket-btn-${tkt.ticketNumber}`"
+                        @click="handleUpdateTicketStatus(tkt, 'Resolved')"
+                      >
+                        Mark Resolved
+                      </button>
+                      <button
+                        v-else
+                        type="button"
+                        class="btn-ghost"
+                        style="padding: 4px 10px; min-height: 28px; font-size: 0.74rem;"
+                        @click="handleUpdateTicketStatus(tkt, 'In Progress')"
+                      >
+                        Reopen
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Two-Column Support Desk Operations: Left = Create New Support Ticket, Right = Inspect & Resolve Selected Ticket -->
+        <div class="checkout-grid">
+          <!-- Left Panel: Create / Add New Support Ticket -->
+          <form
+            class="form-panel"
+            data-testid="create-support-ticket-form"
+            @submit.prevent="handleCreateSupportTicket"
+          >
+            <div class="meta-line">
+              <span class="meta-accent">New Support Ticket Dispatch</span>
+              <span class="meta-sep" aria-hidden="true">·</span>
+              <span>Zod Validated · Instant Webhook Audit</span>
+            </div>
+            <h3
+              style="
+                font-family: var(--font-display);
+                font-size: 1.2rem;
+                font-weight: 700;
+                margin-top: 6px;
+                margin-bottom: 14px;
+              "
+            >
+              + Open New Trader Support Ticket
+            </h3>
+
+            <div class="form-row-2">
+              <div class="form-field">
+                <label class="form-label" for="new-tkt-name">Trader / Client Name</label>
+                <input
+                  id="new-tkt-name"
+                  v-model="newTicketForm.customerName"
+                  type="text"
+                  class="form-input"
+                  data-testid="new-ticket-name-input"
+                  placeholder="e.g. Liam O'Connor"
+                />
+              </div>
+              <div class="form-field">
+                <label class="form-label" for="new-tkt-email">Customer Email</label>
+                <input
+                  id="new-tkt-email"
+                  v-model="newTicketForm.customerEmail"
+                  type="email"
+                  class="form-input"
+                  data-testid="new-ticket-email-input"
+                  placeholder="l.oconnor@dublinprop.ie"
+                />
+              </div>
+            </div>
+
+            <div class="form-row-2">
+              <div class="form-field">
+                <label class="form-label" for="new-tkt-handle">
+                  TradingView Handle / TOS ID
+                </label>
+                <input
+                  id="new-tkt-handle"
+                  v-model="newTicketForm.tradingViewUsername"
+                  type="text"
+                  class="form-input mono"
+                  data-testid="new-ticket-handle-input"
+                  placeholder="Liam_DublinES"
+                />
+              </div>
+              <div class="form-field">
+                <label class="form-label" for="new-tkt-license">
+                  License Key Reference (Optional)
+                </label>
+                <input
+                  id="new-tkt-license"
+                  v-model="newTicketForm.licenseKey"
+                  type="text"
+                  class="form-input mono"
+                  data-testid="new-ticket-license-input"
+                  placeholder="SE-GAMM-8841-A7F2"
+                />
+              </div>
+            </div>
+
+            <div class="form-row-2">
+              <div class="form-field">
+                <label class="form-label" for="new-tkt-platform">Platform Target</label>
+                <select
+                  id="new-tkt-platform"
+                  v-model="newTicketForm.platformTarget"
+                  class="form-select"
+                  data-testid="new-ticket-platform-select"
+                >
+                  <option value="TradingView">TradingView (Pine Script v6)</option>
+                  <option value="thinkorswim">Charles Schwab thinkorswim (.ts)</option>
+                  <option value="Dual-Platform">Dual-Platform (TV + TOS)</option>
+                </select>
+              </div>
+              <div class="form-field">
+                <label class="form-label" for="new-tkt-category">Support Category</label>
+                <select
+                  id="new-tkt-category"
+                  v-model="newTicketForm.category"
+                  class="form-select"
+                  data-testid="new-ticket-category-select"
+                >
+                  <option value="TradingView ACL Sync">TradingView ACL Sync</option>
+                  <option value="thinkorswim Study Import">thinkorswim Study Import</option>
+                  <option value="License Key Re-binding">License Key Re-binding</option>
+                  <option value="Prop Desk Billing">Prop Desk Billing</option>
+                  <option value="Webhook / Alert Setup">Webhook / Alert Setup</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="form-row-2">
+              <div class="form-field">
+                <label class="form-label" for="new-tkt-priority">SLA Priority</label>
+                <select
+                  id="new-tkt-priority"
+                  v-model="newTicketForm.priority"
+                  class="form-select"
+                  data-testid="new-ticket-priority-select"
+                >
+                  <option value="Critical">Critical (15m Institutional SLA)</option>
+                  <option value="High">High (2h Desk SLA)</option>
+                  <option value="Normal">Normal (Same-Day SLA)</option>
+                </select>
+              </div>
+              <div class="form-field">
+                <label class="form-label" for="new-tkt-subject">Ticket Subject</label>
+                <input
+                  id="new-tkt-subject"
+                  v-model="newTicketForm.subject"
+                  type="text"
+                  class="form-input"
+                  data-testid="new-ticket-subject-input"
+                  placeholder="e.g. Requesting Pine v6 ACL sync on NQ chart handle"
+                />
+              </div>
+            </div>
+
+            <div class="form-field">
+              <label class="form-label" for="new-tkt-desc">
+                Diagnostic Context &amp; Request Details
+              </label>
+              <textarea
+                id="new-tkt-desc"
+                v-model="newTicketForm.description"
+                rows="3"
+                class="form-input"
+                data-testid="new-ticket-description-input"
+                placeholder="Describe TradingView handle ACL status, thinkorswim .ts study import behavior, or license re-binding details..."
+              ></textarea>
+            </div>
+
+            <div
+              v-if="createTicketError"
+              class="form-error"
+              style="margin-bottom: 12px;"
+              role="alert"
+            >
+              {{ createTicketError }}
+            </div>
+
+            <button
+              type="submit"
+              class="btn-primary"
+              style="width: 100%;"
+              data-testid="submit-support-ticket-btn"
+              :disabled="creatingTicket"
+            >
+              {{
+                creatingTicket
+                  ? 'Dispatching Support Ticket...'
+                  : 'Create & Route Support Ticket'
+              }}
+            </button>
+          </form>
+
+          <!-- Right Panel: Selected Ticket Inspector & Desk Resolution Console -->
+          <div
+            v-if="selectedTicket"
+            class="form-panel"
+            data-testid="ticket-resolution-panel"
+          >
+            <div class="meta-line">
+              <span class="meta-accent">Active Ticket Inspector</span>
+              <span class="meta-sep" aria-hidden="true">·</span>
+              <span class="mono">{{ selectedTicket.ticketNumber }}</span>
+              <span class="meta-sep" aria-hidden="true">·</span>
+              <span class="mono">{{ selectedTicket.platformTarget }}</span>
+            </div>
+            <h3
+              style="
+                font-family: var(--font-display);
+                font-size: 1.2rem;
+                font-weight: 700;
+                margin-top: 6px;
+                margin-bottom: 10px;
+              "
+            >
+              {{ selectedTicket.subject }}
+            </h3>
+
+            <div
+              style="
+                background: rgba(5, 8, 16, 0.72);
+                border: 1px solid var(--border-subtle);
+                border-radius: var(--radius-md);
+                padding: 12px 14px;
+                margin-bottom: 14px;
+              "
+            >
+              <div
+                style="
+                  display: flex;
+                  justify-content: space-between;
+                  gap: 8px;
+                  flex-wrap: wrap;
+                  font-size: 0.78rem;
+                  color: var(--text-muted);
+                  margin-bottom: 6px;
+                "
+              >
+                <span>
+                  Trader:
+                  <strong style="color: var(--text-primary);">{{
+                    selectedTicket.customerName
+                  }}</strong>
+                  ({{ selectedTicket.customerEmail }})
+                </span>
+                <span class="mono" style="color: var(--accent-emerald-bright);">
+                  @{{ selectedTicket.tradingViewUsername }}
+                </span>
+              </div>
+              <p style="font-size: 0.85rem; color: var(--text-secondary); line-height: 1.55;">
+                {{ selectedTicket.description }}
+              </p>
+              <div
+                class="mono"
+                style="font-size: 0.74rem; color: var(--text-muted); margin-top: 8px;"
+              >
+                License Key: {{ selectedTicket.licenseKey || 'N/A' }} · Opened:
+                {{ selectedTicket.createdAt }}
+              </div>
+            </div>
+
+            <div class="form-row-2">
+              <div class="form-field">
+                <label class="form-label" for="upd-tkt-status">Ticket Status</label>
+                <select
+                  id="upd-tkt-status"
+                  v-model="ticketUpdateForm.status"
+                  class="form-select"
+                  data-testid="ticket-update-status-select"
+                >
+                  <option value="Open">Open</option>
+                  <option value="In Progress">In Progress</option>
+                  <option value="Resolved">Resolved</option>
+                </select>
+              </div>
+              <div class="form-field">
+                <label class="form-label" for="upd-tkt-priority">SLA Priority</label>
+                <select
+                  id="upd-tkt-priority"
+                  v-model="ticketUpdateForm.priority"
+                  class="form-select"
+                  data-testid="ticket-update-priority-select"
+                >
+                  <option value="Critical">Critical</option>
+                  <option value="High">High</option>
+                  <option value="Normal">Normal</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="form-field">
+              <label class="form-label" for="upd-tkt-note">
+                Admin Resolution / Engineering Dispatch Note
+              </label>
+              <textarea
+                id="upd-tkt-note"
+                v-model="ticketUpdateForm.adminResolutionNote"
+                rows="3"
+                class="form-input"
+                data-testid="ticket-resolution-note-input"
+                placeholder="Enter ACL sync verification result, thinkorswim .ts study guidance, or billing resolution note..."
+              ></textarea>
+            </div>
+
+            <button
+              type="button"
+              class="btn-primary"
+              style="width: 100%;"
+              data-testid="save-ticket-update-btn"
+              :disabled="savingTicketUpdate"
+              @click="handleUpdateTicketStatus(selectedTicket)"
+            >
+              {{
+                savingTicketUpdate
+                  ? 'Updating Support Ticket...'
+                  : `Save Desk Response & Update ${selectedTicket.ticketNumber}`
+              }}
+            </button>
+          </div>
         </div>
       </div>
 

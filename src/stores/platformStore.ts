@@ -1,6 +1,9 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
-import { calculateOrderPricing } from '../utils/fulfillment';
+import {
+  calculateOrderPricing,
+  type SupportTicketRecord,
+} from '../utils/fulfillment';
 
 export interface IndicatorItem {
   id: string;
@@ -142,6 +145,64 @@ export const usePlatformStore = defineStore('platform', () => {
   const allLicenses = ref<LicenseRecord[]>([]);
   const allUsers = ref<UserProfile[]>([]);
   const webhookLogs = ref<WebhookLogItem[]>([]);
+  const supportTickets = ref<SupportTicketRecord[]>([
+    {
+      id: 'tkt-9041',
+      ticketNumber: 'TKT-9041',
+      customerName: 'Marcus Vance',
+      customerEmail: 'marcus.vance@apexquant.io',
+      tradingViewUsername: 'MarcusVance_ES',
+      platformTarget: 'TradingView',
+      category: 'TradingView ACL Sync',
+      priority: 'Critical',
+      status: 'Open',
+      subject: 'Sub-account Pine v6 Invite-Only ACL whitelist propagation for NQ desk terminal',
+      description:
+        'Upgraded to Full Institutional Bundle for our primary CME ES/NQ desk. Requesting immediate Invite-Only ACL sync verification on backup chart handle @MarcusVance_ES.',
+      licenseKey: 'SE-BUND-8841-A9C2',
+      adminResolutionNote:
+        'Awaiting automated TradingView Pine v6 ACL verification ping on primary & backup desk handles.',
+      createdAt: '2026-10-31 14:12:00 UTC',
+      updatedAt: '2026-10-31 14:12:00 UTC',
+    },
+    {
+      id: 'tkt-9038',
+      ticketNumber: 'TKT-9038',
+      customerName: 'Elena Rostova',
+      customerEmail: 'elena.rostova@zurichprop.ch',
+      tradingViewUsername: 'Elena_ZurichQuant',
+      platformTarget: 'thinkorswim',
+      category: 'thinkorswim Study Import',
+      priority: 'High',
+      status: 'In Progress',
+      subject: 'Charles Schwab thinkorswim v5.4 Gamma Exposure .ts study aggregation alert',
+      description:
+        'Imported StratEdge_Gamma_v5_4.ts into Schwab thinkorswim desktop on 2-minute /ES chart. Need confirmation on recommended secondary aggregation period for 0DTE dealer gamma flip zones.',
+      licenseKey: 'SE-GAMM-7721-B4E9',
+      adminResolutionNote:
+        'Assigned to Senior Quant Engineer: Provided 15-min secondary aggregation parameter preset for 0DTE SPX/ES.',
+      createdAt: '2026-10-30 19:45:00 UTC',
+      updatedAt: '2026-10-31 09:20:00 UTC',
+    },
+    {
+      id: 'tkt-9034',
+      ticketNumber: 'TKT-9034',
+      customerName: 'David Chen',
+      customerEmail: 'david.chen@pacificcap.com',
+      tradingViewUsername: 'DChen_SwingMacro',
+      platformTarget: 'Dual-Platform',
+      category: 'License Key Re-binding',
+      priority: 'Normal',
+      status: 'Open',
+      subject: 'Re-bind thinkorswim account ID after Charles Schwab institutional migration',
+      description:
+        'Our Pacific Cap macro desk migrated TD Ameritrade accounts to Charles Schwab Institutional ID TOS-552901. Please update watermark binding on our Liquidity Matrix license.',
+      licenseKey: 'SE-LIQM-5529-C1D8',
+      adminResolutionNote: '',
+      createdAt: '2026-10-29 16:08:00 UTC',
+      updatedAt: '2026-10-29 16:08:00 UTC',
+    },
+  ]);
   const metrics = ref<DashboardMetrics>({
     totalRevenue: 0,
     mrr: 0,
@@ -341,6 +402,9 @@ export const usePlatformStore = defineStore('platform', () => {
         allLicenses.value = dashData.allLicenses || [];
         allUsers.value = dashData.allUsers || [];
         webhookLogs.value = dashData.webhookLogs || [];
+        if (Array.isArray(dashData.supportTickets)) {
+          supportTickets.value = dashData.supportTickets;
+        }
         if (dashData.currentUser) {
           activeCustomerName.value = dashData.currentUser.name;
           activeTradingViewHandle.value = dashData.currentUser.tradingViewUsername;
@@ -407,6 +471,7 @@ export const usePlatformStore = defineStore('platform', () => {
     allLicenses,
     allUsers,
     webhookLogs,
+    supportTickets,
     metrics,
     salesReport,
     platformSettings,

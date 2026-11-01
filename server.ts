@@ -13,6 +13,8 @@ import {
   CheckoutFormSchema,
   TvSyncSchema,
   AdminProvisionSchema,
+  SupportTicketSchema,
+  type SupportTicketRecord,
   calculateOrderPricing,
   generateDeterministicLicenseKey,
   generateThinkScriptArtifact,
@@ -82,6 +84,104 @@ async function startServer() {
     requireStrictTvHandleVerification: true,
     watermarkTosDownloads: true,
   };
+
+  // Enterprise Support Tickets Queue (TradingView ACL, thinkorswim Study Import, Prop Desk Billing)
+  let supportTickets: SupportTicketRecord[] = [
+    {
+      id: 'tkt-9041',
+      ticketNumber: 'TKT-9041',
+      customerName: 'Marcus Vance',
+      customerEmail: 'marcus.vance@apexquant.io',
+      tradingViewUsername: 'MarcusVance_ES',
+      platformTarget: 'TradingView',
+      category: 'TradingView ACL Sync',
+      priority: 'Critical',
+      status: 'Open',
+      subject: 'Sub-account Pine v6 Invite-Only ACL whitelist propagation for NQ desk terminal',
+      description:
+        'Upgraded to Full Institutional Bundle for our primary CME ES/NQ desk. Requesting immediate Invite-Only ACL sync verification on backup chart handle @MarcusVance_ES.',
+      licenseKey: 'SE-BUND-8841-A9C2',
+      adminResolutionNote:
+        'Awaiting automated TradingView Pine v6 ACL verification ping on primary & backup desk handles.',
+      createdAt: '2026-10-31 14:12:00 UTC',
+      updatedAt: '2026-10-31 14:12:00 UTC',
+    },
+    {
+      id: 'tkt-9038',
+      ticketNumber: 'TKT-9038',
+      customerName: 'Elena Rostova',
+      customerEmail: 'elena.rostova@zurichprop.ch',
+      tradingViewUsername: 'Elena_ZurichQuant',
+      platformTarget: 'thinkorswim',
+      category: 'thinkorswim Study Import',
+      priority: 'High',
+      status: 'In Progress',
+      subject: 'Charles Schwab thinkorswim v5.4 Gamma Exposure .ts study aggregation alert',
+      description:
+        'Imported StratEdge_Gamma_v5_4.ts into Schwab thinkorswim desktop on 2-minute /ES chart. Need confirmation on recommended secondary aggregation period for 0DTE dealer gamma flip zones.',
+      licenseKey: 'SE-GAMM-7721-B4E9',
+      adminResolutionNote:
+        'Assigned to Senior Quant Engineer: Provided 15-min secondary aggregation parameter preset for 0DTE SPX/ES.',
+      createdAt: '2026-10-30 19:45:00 UTC',
+      updatedAt: '2026-10-31 09:20:00 UTC',
+    },
+    {
+      id: 'tkt-9034',
+      ticketNumber: 'TKT-9034',
+      customerName: 'David Chen',
+      customerEmail: 'david.chen@pacificcap.com',
+      tradingViewUsername: 'DChen_SwingMacro',
+      platformTarget: 'Dual-Platform',
+      category: 'License Key Re-binding',
+      priority: 'Normal',
+      status: 'Open',
+      subject: 'Re-bind thinkorswim account ID after Charles Schwab institutional migration',
+      description:
+        'Our Pacific Cap macro desk migrated TD Ameritrade accounts to Charles Schwab Institutional ID TOS-552901. Please update watermark binding on our Liquidity Matrix license.',
+      licenseKey: 'SE-LIQM-5529-C1D8',
+      adminResolutionNote: '',
+      createdAt: '2026-10-29 16:08:00 UTC',
+      updatedAt: '2026-10-29 16:08:00 UTC',
+    },
+    {
+      id: 'tkt-9029',
+      ticketNumber: 'TKT-9029',
+      customerName: 'Julian Sterling',
+      customerEmail: 'j.sterling@citadeldesk.io',
+      tradingViewUsername: 'Sterling_NQFlow',
+      platformTarget: 'TradingView',
+      category: 'Webhook / Alert Setup',
+      priority: 'High',
+      status: 'Resolved',
+      subject: 'JSON webhook payload schema for automated CVD Divergence execution router',
+      description:
+        'Configuring TradingView server-side alert webhooks to route StratEdge CVD Absorption signals into our execution bridge. Need exact JSON template variables.',
+      licenseKey: 'SE-FLOW-3310-F7A4',
+      adminResolutionNote:
+        'Delivered canonical Pine v6 alertcondition() JSON webhook template and verified 42ms round-trip delivery.',
+      createdAt: '2026-10-28 11:30:00 UTC',
+      updatedAt: '2026-10-28 13:05:00 UTC',
+    },
+    {
+      id: 'tkt-9022',
+      ticketNumber: 'TKT-9022',
+      customerName: 'Sophia Lindqvist',
+      customerEmail: 's.lindqvist@nordicalpha.se',
+      tradingViewUsername: 'NordicAlpha_FX',
+      platformTarget: 'Dual-Platform',
+      category: 'Prop Desk Billing',
+      priority: 'Normal',
+      status: 'Resolved',
+      subject: 'Annual to Lifetime multi-seat prop desk upgrade invoice & VAT receipt',
+      description:
+        'Upgrading 3 Annual seats to Lifetime Prop Desk entitlement with coupon PROP15. Requesting countersigned PDF invoice for Stockholm compliance.',
+      licenseKey: 'SE-BUND-1194-E2B7',
+      adminResolutionNote:
+        'Issued Lifetime multi-seat upgrade credit and dispatched countersigned institutional receipt.',
+      createdAt: '2026-10-25 08:15:00 UTC',
+      updatedAt: '2026-10-25 10:40:00 UTC',
+    },
+  ];
 
   function buildSalesReport(allLicenses = db.select().from(licensesTable).all()) {
     const indicators = db.select().from(indicatorsTable).all();
@@ -220,6 +320,7 @@ async function startServer() {
       customerLicenses,
       allLicenses,
       webhookLogs,
+      supportTickets,
       platformSettings,
       salesReport,
       metrics: {
@@ -1390,6 +1491,149 @@ async function startServer() {
     res.json({
       message: 'Enterprise platform & storefront customization saved live.',
       settings: platformSettings,
+    });
+  });
+
+  // 13. GET & POST /api/admin/tickets - Institutional Support Tickets Management
+  app.get('/api/admin/tickets', (_req, res) => {
+    res.json({
+      tickets: supportTickets,
+      summary: {
+        total: supportTickets.length,
+        open: supportTickets.filter((t) => t.status === 'Open').length,
+        inProgress: supportTickets.filter((t) => t.status === 'In Progress').length,
+        resolved: supportTickets.filter((t) => t.status === 'Resolved').length,
+        critical: supportTickets.filter(
+          (t) => t.priority === 'Critical' && t.status !== 'Resolved'
+        ).length,
+      },
+    });
+  });
+
+  app.post('/api/admin/tickets', (req, res) => {
+    const parsed = SupportTicketSchema.safeParse(req.body);
+    if (!parsed.success) {
+      const firstError =
+        parsed.error.issues[0]?.message || 'Invalid support ticket payload.';
+      res.status(400).json({ error: firstError, issues: parsed.error.issues });
+      return;
+    }
+
+    const data = parsed.data;
+    const nowIso = new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+    const nextNum = 9042 + supportTickets.length;
+    const ticketNumber = `TKT-${nextNum}`;
+
+    const newTicket: SupportTicketRecord = {
+      id: `tkt-${Date.now()}`,
+      ticketNumber,
+      customerName: data.customerName,
+      customerEmail: data.customerEmail.toLowerCase(),
+      tradingViewUsername: data.tradingViewUsername,
+      platformTarget: data.platformTarget,
+      category: data.category,
+      priority: data.priority,
+      status: 'Open',
+      subject: data.subject,
+      description: data.description,
+      licenseKey:
+        data.licenseKey ||
+        generateDeterministicLicenseKey(
+          'se-support-ticket',
+          data.customerEmail,
+          String(nextNum)
+        ),
+      adminResolutionNote:
+        typeof req.body?.adminResolutionNote === 'string'
+          ? req.body.adminResolutionNote.trim()
+          : '',
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    };
+
+    supportTickets = [newTicket, ...supportTickets];
+
+    db.insert(webhookLogsTable)
+      .values({
+        id: `wh-${Date.now()}`,
+        eventType: 'support.ticket.created',
+        licenseKey: newTicket.ticketNumber,
+        customerEmail: newTicket.customerEmail,
+        tradingViewUsername: newTicket.tradingViewUsername,
+        platformTarget: `${newTicket.platformTarget} Support Queue (${newTicket.priority})`,
+        status: '201 Created — Open',
+        latencyMs: 34,
+        payloadSummary: `[${newTicket.ticketNumber}] ${newTicket.category}: ${newTicket.subject}`,
+        createdAt: nowIso,
+      })
+      .run();
+
+    res.status(201).json({
+      message: `Support ticket ${newTicket.ticketNumber} created and routed to Desk Operations.`,
+      ticket: newTicket,
+      tickets: supportTickets,
+    });
+  });
+
+  app.post('/api/admin/tickets/update', (req, res) => {
+    const { ticketId, status, priority, adminResolutionNote } = req.body as {
+      ticketId?: string;
+      status?: 'Open' | 'In Progress' | 'Resolved';
+      priority?: 'Critical' | 'High' | 'Normal';
+      adminResolutionNote?: string;
+    };
+
+    if (!ticketId) {
+      res.status(400).json({ error: 'ticketId is required.' });
+      return;
+    }
+
+    const idx = supportTickets.findIndex((t) => t.id === ticketId || t.ticketNumber === ticketId);
+    if (idx < 0) {
+      res.status(404).json({ error: 'Support ticket not found.' });
+      return;
+    }
+
+    const existing = supportTickets[idx];
+    const nowIso = new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+    const updated: SupportTicketRecord = {
+      ...existing,
+      status:
+        status && ['Open', 'In Progress', 'Resolved'].includes(status)
+          ? status
+          : existing.status,
+      priority:
+        priority && ['Critical', 'High', 'Normal'].includes(priority)
+          ? priority
+          : existing.priority,
+      adminResolutionNote:
+        typeof adminResolutionNote === 'string'
+          ? adminResolutionNote.trim()
+          : existing.adminResolutionNote,
+      updatedAt: nowIso,
+    };
+
+    supportTickets[idx] = updated;
+
+    db.insert(webhookLogsTable)
+      .values({
+        id: `wh-${Date.now()}`,
+        eventType: 'support.ticket.updated',
+        licenseKey: updated.ticketNumber,
+        customerEmail: updated.customerEmail,
+        tradingViewUsername: updated.tradingViewUsername,
+        platformTarget: `Support Desk — Status: ${updated.status}`,
+        status: `200 OK — ${updated.status}`,
+        latencyMs: 27,
+        payloadSummary: `[${updated.ticketNumber}] Updated to ${updated.status} (${updated.priority}) — ${updated.adminResolutionNote || updated.subject}`,
+        createdAt: nowIso,
+      })
+      .run();
+
+    res.json({
+      message: `Ticket ${updated.ticketNumber} updated to ${updated.status}.`,
+      ticket: updated,
+      tickets: supportTickets,
     });
   });
 

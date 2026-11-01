@@ -18,6 +18,7 @@ import {
 } from '../utils/fulfillment';
 import Quant3DSurface from './Quant3DSurface.vue';
 import TestimonialsSection from './TestimonialsSection.vue';
+import FAQSection from './FAQSection.vue';
 
 const emit = defineEmits<{
   (e: 'navigate', view: 'storefront' | 'checkout' | 'dashboard' | 'admin'): void;
@@ -239,27 +240,6 @@ const table = useVueTable({
   getSortedRowModel: getSortedRowModel(),
   getFilteredRowModel: getFilteredRowModel(),
 });
-
-// FAQ Accordion State for SEO & Objection Handling
-const openFaqIndex = ref<number>(0);
-const faqItems = [
-  {
-    q: 'How does automated indicator delivery work for TradingView and thinkorswim?',
-    a: 'Immediately upon completing checkout on stratedgealgo.com, our webhook engine generates your cryptographic license key (SE-XXXX-XXXX-XXXX), whitelists your TradingView username on our Pine Script v6 invite-only permission server, and unlocks direct Charles Schwab thinkorswim .ts study file downloads and tos.mx workspace links inside your Customer Portal.',
-  },
-  {
-    q: 'What is the difference between StratEdge Algo Gamma, Flow, and Structure?',
-    a: 'StratEdge Algo Gamma models 0DTE and multi-expiration dealer gamma exposure (GEX), Call/Put walls, and the Zero-Gamma Flip axis. StratEdge Algo Flow measures real-time order-book delta absorption, cumulative volume delta (CVD) divergence, and dark-pool block tape. StratEdge Algo Structure maps institutional Break of Structure (BOS), liquidity sweeps, and multi-sigma Anchored VWAP bands.',
-  },
-  {
-    q: 'Do StratEdge Algo indicators repaint on historical or real-time bars?',
-    a: 'Zero historical repainting. Every signal in Gamma, Flow, and Structure is calculated strictly on confirmed bar closes or verifiable intra-bar tick volume thresholds without future-bar lookahead bias.',
-  },
-  {
-    q: 'Can I switch my TradingView username or re-download thinkorswim .ts files later?',
-    a: 'Yes. Your Customer Portal includes a self-service TradingView ACL Sync tool that updates your whitelisted username in under 1 second, plus unlimited re-downloads of watermarked .ts ThinkScript files.',
-  },
-];
 
 // TanStack Form (@tanstack/vue-form) + Zod for Instant Automated Checkout & Provisioning
 const checkoutSectionRef = ref<HTMLElement | null>(null);
@@ -1455,44 +1435,7 @@ function selectIndicatorForCheckout(
     </section>
 
     <!-- 8. TECHNICAL FAQ & SCHEMA.ORG STRUCTURED KNOWLEDGE BASE -->
-    <section id="technical-faq" class="section-block" style="border-bottom: none;">
-      <div class="container">
-        <div class="section-header">
-          <div>
-            <p class="hero-kicker">Technical Documentation &amp; Licensing FAQ</p>
-            <h2 class="section-title" style="margin-top: 4px;">
-              07. Frequently Asked Questions
-            </h2>
-          </div>
-        </div>
-
-        <div class="faq-list">
-          <div
-            v-for="(item, idx) in faqItems"
-            :key="idx"
-            class="faq-item"
-          >
-            <button
-              type="button"
-              class="faq-question-btn"
-              :aria-expanded="openFaqIndex === idx"
-              @click="openFaqIndex = openFaqIndex === idx ? -1 : idx"
-            >
-              <span>{{ item.q }}</span>
-              <span class="mono" style="color: var(--accent-emerald);">
-                {{ openFaqIndex === idx ? '−' : '+' }}
-              </span>
-            </button>
-            <p
-              v-if="openFaqIndex === idx"
-              style="margin-top: 12px; font-size: 0.9375rem; color: var(--text-secondary); line-height: 1.65;"
-            >
-              {{ item.a }}
-            </p>
-          </div>
-        </div>
-      </div>
-    </section>
+    <FAQSection @navigate="emit('navigate', $event)" />
 
     <!-- MODAL: INSPECT THINKSCRIPT & PINE SCRIPT CODE SPECIFICATION -->
     <div

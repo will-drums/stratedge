@@ -15,7 +15,13 @@ import {
   buildOrderConfirmationSummary,
   generateThinkScriptArtifact,
   buildDailyRevenueGrowthSeries,
+  computeRevenuePeriodMetrics,
   computeCustomerLicenseDistribution,
+  SupportTicketSchema,
+  filterSupportTickets,
+  TRADER_FAQ_ITEMS,
+  filterTraderFaqs,
+  type SupportTicketRecord,
 } from './fulfillment';
 
 test('TradingViewUsernameSchema validates legitimate handles and rejects invalid symbols', () => {
@@ -348,5 +354,149 @@ test('CheckoutPaymentSettlementStepSchema and buildOrderConfirmationSummary vali
   assert.equal(summary.boundHandleLabel, '@MarcusVance_ES');
   assert.equal(summary.totalPaid, 1266.5);
 });
+
+test('buildDailyRevenueGrowthSeries and computeRevenuePeriodMetrics support interactive time-range presets, custom date slices, and tier filtering', () => {
+  const sampleLicenses = [
+    {
+      amountPaid: 2490,
+      provisionedAt: '2026-10-18',
+      billingCycle: 'Lifetime',
+      indicatorId: 'se-algo-gamma',
+    },
+    {
+      amountPaid: 1490,
+      provisionedAt: '2026-10-25',
+      billingCycle: 'Annual',
+      indicatorId: 'se-algo-flow',
+    },
+    {
+      amountPaid: 3990,
+      provisionedAt: '2026-10-30',
+      billingCycle: 'Lifetime',
+      indicatorId: 'se-institutional-bundle',
+    },
+  ];
+
+  const series7d = buildDailyRevenueGrowthSeries(sampleLicenses, 7);
+  assert.equal(series7d.length, 7);
+  assert.ok(series7d[6].movingAvg7d > 0);
+
+  const series90d = buildDailyRevenueGrowthSeries(sampleLicenses, 90);
+  assert.equal(series90d.length, 90);
+  assert.ok(series90d[89].cumulativeRevenue > series7d[6].cumulativeRevenue);
+
+  const customDateSlice = buildDailyRevenueGrowthSeries(sampleLicenses, 30, {
+    startDate: '2026-10-20',
+    endDate: '2026-10-25',
+  });
+  assert.equal(customDateSlice.length, 6);
+  assert.equal(customDateSlice[0].isoDate, '2026-10-20');
+  assert.equal(customDateSlice[5].isoDate, '2026-10-25');
+
+  const metrics = computeRevenuePeriodMetrics(customDateSlice);
+  assert.equal(metrics.daysInPeriod, 6);
+  assert.equal(metrics.periodTotalRevenue, customDateSlice[5].cumulativeRevenue);
+  assert.ok(metrics.peakDailyRevenue >= metrics.averageDailyRevenue);
+});
+
+test('SupportTicketSchema and filterSupportTickets validate and filter institutional support tickets', () => {
+  const validTicket = SupportTicketSchema.safeParse({
+    customerName: 'Liam OConnor',
+    customerEmail: 'liam@dublinprop.ie',
+    tradingViewUsername: 'Liam_DublinES',
+    platformTarget: 'TradingView',
+    category: 'TradingView ACL Sync',
+    priority: 'Critical',
+    subject: 'Requesting Pine v6 ACL sync on NQ chart handle',
+    description:
+      'Completed checkout for StratEdge Algo Gamma Annual license, need ACL sync verified.',
+    licenseKey: 'SE-GAMM-8841-A7F2',
+  });
+  assert.equal(validTicket.success, true);
+
+  const invalidTicket = SupportTicketSchema.safeParse({
+    customerName: 'L',
+    customerEmail: 'bad-email',
+    tradingViewUsername: 'a',
+    platformTarget: 'TradingView',
+    category: 'TradingView ACL Sync',
+    priority: 'Critical',
+    subject: 'hi',
+    description: 'short',
+  });
+  assert.equal(invalidTicket.success, false);
+
+  const sampleTickets: SupportTicketRecord[] = [
+    {
+      id: 't1',
+      ticketNumber: 'TKT-9041',
+      customerName: 'Marcus Vance',
+      customerEmail: 'marcus@apex.io',
+      tradingViewUsername: 'MarcusVance_ES',
+      platformTarget: 'TradingView',
+      category: 'TradingView ACL Sync',
+      priority: 'Critical',
+      status: 'Open',
+      subject: 'Sub-account Pine v6 ACL sync',
+      description: 'Need immediate ACL sync.',
+      licenseKey: 'SE-BUND-8841',
+      adminResolutionNote: '',
+      createdAt: '2026-10-31',
+      updatedAt: '2026-10-31',
+    },
+    {
+      id: 't2',
+      ticketNumber: 'TKT-9038',
+      customerName: 'Elena Rostova',
+      customerEmail: 'elena@zurich.ch',
+      tradingViewUsername: 'Elena_Quant',
+      platformTarget: 'thinkorswim',
+      category: 'thinkorswim Study Import',
+      priority: 'High',
+      status: 'Resolved',
+      subject: 'Schwab thinkorswim study aggregation',
+      description: 'Need secondary aggregation.',
+      licenseKey: 'SE-GAMM-7721',
+      adminResolutionNote: 'Resolved.',
+      createdAt: '2026-10-30',
+      updatedAt: '2026-10-31',
+    },
+  ];
+
+  const openOnly = filterSupportTickets(sampleTickets, { status: 'Open' });
+  assert.equal(openOnly.length, 1);
+  assert.equal(openOnly[0].ticketNumber, 'TKT-9041');
+
+  const searchElena = filterSupportTickets(sampleTickets, {
+    searchQuery: 'elena',
+  });
+  assert.equal(searchElena.length, 1);
+  assert.equal(searchElena[0].ticketNumber, 'TKT-9038');
+});
+
+test('filterTraderFaqs filters trader inquiries across Installation, Licensing, and Indicator Usage categories and search keywords', () => {
+  assert.ok(TRADER_FAQ_ITEMS.length >= 8);
+
+  const installFaqs = filterTraderFaqs(TRADER_FAQ_ITEMS, 'Installation', '');
+  assert.ok(installFaqs.length >= 2);
+  assert.ok(installFaqs.every((item) => item.category === 'Installation'));
+
+  const licensingFaqs = filterTraderFaqs(TRADER_FAQ_ITEMS, 'Licensing', '');
+  assert.ok(licensingFaqs.length >= 2);
+  assert.ok(licensingFaqs.every((item) => item.category === 'Licensing'));
+
+  const usageFaqs = filterTraderFaqs(TRADER_FAQ_ITEMS, 'Indicator Usage', '');
+  assert.ok(usageFaqs.length >= 2);
+  assert.ok(usageFaqs.every((item) => item.category === 'Indicator Usage'));
+
+  const repaintSearch = filterTraderFaqs(TRADER_FAQ_ITEMS, 'All', 'repaint');
+  assert.equal(repaintSearch.length, 1);
+  assert.equal(repaintSearch[0].id, 'faq-usage-non-repainting');
+
+  const tosInstallSearch = filterTraderFaqs(TRADER_FAQ_ITEMS, 'Installation', 'thinkorswim');
+  assert.ok(tosInstallSearch.length >= 2);
+});
+
+
 
 

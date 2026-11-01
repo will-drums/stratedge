@@ -5,17 +5,22 @@ import {
   ComposedChart,
   Area,
   Bar,
+  Line,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
   Legend,
+  Brush,
+  ReferenceLine,
 } from 'recharts';
 import type { DailyRevenuePoint } from './fulfillment';
 
 export interface RechartsDailyRevenueOptions {
   data: DailyRevenuePoint[];
-  chartMode: 'combined' | 'daily';
+  chartMode: 'combined' | 'daily' | 'cumulative';
+  showMovingAverage?: boolean;
+  enableBrush?: boolean;
 }
 
 export class DailyRevenueRechartsMount {
@@ -34,16 +39,31 @@ export class DailyRevenueRechartsMount {
   render(options: RechartsDailyRevenueOptions) {
     if (!this.root) return;
 
-    const { data, chartMode } = options;
+    const {
+      data,
+      chartMode,
+      showMovingAverage = true,
+      enableBrush = false,
+    } = options;
+
+    const avgDaily =
+      data.length > 0
+        ? Math.round(data.reduce((s, d) => s + d.dailyRevenue, 0) / data.length)
+        : 0;
+
+    const showDailyBars = chartMode === 'combined' || chartMode === 'daily';
+    const showCumulativeArea =
+      chartMode === 'combined' || chartMode === 'cumulative';
+    const cumulativeAxisId = chartMode === 'cumulative' ? 'left' : 'right';
 
     const chartElement = React.createElement(
       ResponsiveContainer,
-      { width: '100%', height: 280, minWidth: 280 },
+      { width: '100%', height: enableBrush ? 310 : 280, minWidth: 280 },
       React.createElement(
         ComposedChart,
         {
           data,
-          margin: { top: 14, right: 18, left: 6, bottom: 6 },
+          margin: { top: 14, right: 18, left: 6, bottom: enableBrush ? 12 : 6 },
         },
         React.createElement(
           'defs',
@@ -88,10 +108,11 @@ export class DailyRevenueRechartsMount {
           tick: { fill: '#94A3B8', fontSize: 11, fontFamily: 'JetBrains Mono, monospace' },
           tickLine: false,
           axisLine: { stroke: 'rgba(148, 163, 184, 0.22)' },
+          minTickGap: data.length > 35 ? 24 : 10,
         }),
         React.createElement(YAxis, {
           yAxisId: 'left',
-          stroke: '#38BDF8',
+          stroke: chartMode === 'cumulative' ? '#10B981' : '#38BDF8',
           tick: { fill: '#94A3B8', fontSize: 11, fontFamily: 'JetBrains Mono, monospace' },
           tickLine: false,
           axisLine: false,
@@ -137,18 +158,40 @@ export class DailyRevenueRechartsMount {
             color: '#CBD5E1',
           },
         }),
-        React.createElement(Bar, {
-          yAxisId: 'left',
-          dataKey: 'dailyRevenue',
-          name: 'Daily Sales Revenue (USD)',
-          fill: 'url(#seDailyBarGrad)',
-          radius: [4, 4, 0, 0],
-          barSize: data.length > 20 ? 12 : 20,
-          isAnimationActive: false,
-        }),
-        chartMode === 'combined'
+        showDailyBars && avgDaily > 0
+          ? React.createElement(ReferenceLine, {
+              yAxisId: 'left',
+              y: avgDaily,
+              stroke: 'rgba(245, 158, 11, 0.5)',
+              strokeDasharray: '4 4',
+            })
+          : null,
+        showDailyBars
+          ? React.createElement(Bar, {
+              yAxisId: 'left',
+              dataKey: 'dailyRevenue',
+              name: 'Daily Sales Revenue (USD)',
+              fill: 'url(#seDailyBarGrad)',
+              radius: [4, 4, 0, 0],
+              barSize: data.length > 60 ? 6 : data.length > 20 ? 12 : 20,
+              isAnimationActive: false,
+            })
+          : null,
+        showDailyBars && showMovingAverage
+          ? React.createElement(Line, {
+              yAxisId: 'left',
+              type: 'monotone',
+              dataKey: 'movingAvg7d',
+              name: '7D Rolling Avg (USD)',
+              stroke: '#F59E0B',
+              strokeWidth: 2,
+              dot: false,
+              isAnimationActive: false,
+            })
+          : null,
+        showCumulativeArea
           ? React.createElement(Area, {
-              yAxisId: 'right',
+              yAxisId: cumulativeAxisId,
               type: 'monotone',
               dataKey: 'cumulativeRevenue',
               name: 'Cumulative Revenue Trajectory (USD)',
@@ -157,6 +200,15 @@ export class DailyRevenueRechartsMount {
               fillOpacity: 1,
               fill: 'url(#seCumulativeRevenueGrad)',
               isAnimationActive: false,
+            })
+          : null,
+        enableBrush && data.length > 5
+          ? React.createElement(Brush, {
+              dataKey: 'dateLabel',
+              height: 22,
+              stroke: '#10B981',
+              fill: '#0B1220',
+              travellerWidth: 8,
             })
           : null
       )
