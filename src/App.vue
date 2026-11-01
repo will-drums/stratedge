@@ -1,0 +1,262 @@
+<script setup lang="ts">
+import { ref, onMounted, computed } from 'vue';
+import { useHead, useSeoMeta } from '@unhead/vue';
+import { usePlatformStore } from './stores/platformStore';
+import StorefrontView from './components/StorefrontView.vue';
+import DashboardView from './components/DashboardView.vue';
+import AdminFulfillmentView from './components/AdminFulfillmentView.vue';
+import AuthModal from './components/AuthModal.vue';
+import CartDrawer from './components/CartDrawer.vue';
+
+const store = usePlatformStore();
+const activeView = ref<'storefront' | 'dashboard' | 'admin'>('storefront');
+
+// Reactive Unhead SEO Metadata (@unhead/vue) matching exact StratEdge Algo brand table
+const seoTitle = computed(() => {
+  if (activeView.value === 'dashboard') {
+    return 'Customer Dashboard, Memberships & Downloads — StratEdge Algo';
+  }
+  if (activeView.value === 'admin') {
+    return 'Admin E-Commerce & Webhook Operations — StratEdge Algo';
+  }
+  return 'StratEdge Algo — Advanced Trading Indicators';
+});
+
+const seoDescription = computed(() => {
+  if (activeView.value === 'dashboard') {
+    return 'Manage your StratEdge Algo memberships, active indicator subscriptions, TradingView Invite-Only handles, and Charles Schwab thinkorswim .ts study downloads.';
+  }
+  return 'StratEdge Algo — Precision Engineered. Evidence Driven. Premium Trading Technology featuring StratEdge Algo Gamma, Flow, and Structure for TradingView and thinkorswim.';
+});
+
+const canonicalUrl = computed(() => {
+  if (activeView.value === 'dashboard') return 'https://stratedgealgo.com/dashboard';
+  if (activeView.value === 'admin') return 'https://stratedgealgo.com/admin';
+  return 'https://stratedgealgo.com/';
+});
+
+useSeoMeta({
+  title: seoTitle,
+  description: seoDescription,
+  ogTitle: seoTitle,
+  ogDescription: seoDescription,
+  ogSiteName: 'StratEdge Algo',
+  ogUrl: canonicalUrl,
+  ogType: 'website',
+  twitterCard: 'summary_large_image',
+  twitterTitle: seoTitle,
+  twitterDescription: seoDescription,
+});
+
+useHead({
+  link: [
+    {
+      rel: 'canonical',
+      href: canonicalUrl,
+    },
+  ],
+});
+
+function setView(view: 'storefront' | 'dashboard' | 'admin', hashAnchor?: string) {
+  activeView.value = view;
+  if (view === 'storefront' && hashAnchor) {
+    setTimeout(() => {
+      const el = document.querySelector(hashAnchor);
+      el?.scrollIntoView({ behavior: 'smooth' });
+    }, 60);
+  } else {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+}
+
+onMounted(() => {
+  store.fetchAllData();
+});
+</script>
+
+<template>
+  <div>
+    <!-- TOP BAR: Brand Wordmark + Core E-Commerce/Dashboard Links + Auth & Cart Actions -->
+    <header class="topbar">
+      <div class="topbar-inner">
+        <!-- Zone 1: Brand Wordmark -->
+        <a
+          href="#top"
+          class="brand-wordmark"
+          @click.prevent="setView('storefront')"
+        >
+          StratEdge Algo
+        </a>
+
+        <!-- Zone 2: Primary Navigation -->
+        <nav class="topbar-nav" aria-label="Primary Navigation">
+          <a
+            href="#indicator-catalog"
+            class="topbar-link"
+            :class="{ active: activeView === 'storefront' }"
+            @click.prevent="setView('storefront', '#indicator-catalog')"
+          >
+            Indicators
+          </a>
+          <a
+            href="#pricing-plans"
+            class="topbar-link"
+            @click.prevent="setView('storefront', '#pricing-plans')"
+          >
+            Memberships
+          </a>
+          <a
+            href="#backtest-matrix"
+            class="topbar-link"
+            @click.prevent="setView('storefront', '#backtest-matrix')"
+          >
+            Backtests
+          </a>
+          <a
+            href="#customer-portal"
+            class="topbar-link"
+            :class="{ active: activeView === 'dashboard' }"
+            data-testid="nav-customer-dashboard"
+            @click.prevent="setView('dashboard')"
+          >
+            Customer Dashboard ({{ store.customerLicenses.length }})
+          </a>
+          <a
+            href="#admin-console"
+            class="topbar-link"
+            :class="{ active: activeView === 'admin' }"
+            data-testid="nav-admin-dashboard"
+            @click.prevent="setView('admin')"
+          >
+            Admin Dashboard
+          </a>
+        </nav>
+
+        <!-- Zone 3: Sign In / Account + Shopping Cart Drawer Trigger -->
+        <div class="topbar-actions" style="gap: 10px;">
+          <button
+            type="button"
+            class="btn-ghost"
+            data-testid="open-auth-modal-btn"
+            @click="store.openAuthModal('login')"
+          >
+            {{
+              store.isAuthenticated
+                ? `Account: ${store.activeCustomerName.split(' ')[0]}`
+                : 'Sign In / Sign Up'
+            }}
+          </button>
+
+          <button
+            type="button"
+            class="btn-primary"
+            data-testid="open-cart-drawer-btn"
+            @click="store.isCartDrawerOpen = true"
+          >
+            Cart ({{ store.cartTotals.itemCount }}) · ${{
+              store.cartTotals.finalTotal.toLocaleString()
+            }}
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Live Fulfillment Notification Banner -->
+    <div
+      v-if="store.notificationBanner"
+      class="notification-bar"
+      role="status"
+      aria-live="polite"
+    >
+      <div class="notification-inner">
+        <div>
+          <strong style="color: var(--accent-emerald-bright); margin-right: 10px;">
+            {{ store.notificationBanner.title }}
+          </strong>
+          <span style="font-size: 0.875rem; color: var(--text-secondary);">
+            {{ store.notificationBanner.detail }}
+          </span>
+        </div>
+        <button
+          type="button"
+          class="btn-ghost"
+          @click="store.notificationBanner = null"
+        >
+          Dismiss
+        </button>
+      </div>
+    </div>
+
+    <!-- Main Application View -->
+    <main>
+      <StorefrontView
+        v-if="activeView === 'storefront'"
+        @navigate="setView"
+      />
+      <DashboardView
+        v-else-if="activeView === 'dashboard'"
+        @navigate="setView"
+      />
+      <AdminFulfillmentView
+        v-else
+        @navigate="setView"
+      />
+    </main>
+
+    <!-- Global Login / Sign Up Modal -->
+    <AuthModal @navigate="setView" />
+
+    <!-- Global Slide-Over Shopping Cart & Multi-Item Checkout Drawer -->
+    <CartDrawer @navigate="setView" />
+
+    <!-- Quiet Institutional Footer -->
+    <footer class="site-footer">
+      <div class="container footer-inner">
+        <div>
+          <strong style="color: var(--text-primary); font-family: var(--font-display);">
+            StratEdge Algo
+          </strong>
+          <span style="margin-left: 10px; color: var(--accent-emerald-bright); font-weight: 600;">
+            Precision Engineered. Evidence Driven.
+          </span>
+          <span style="margin-left: 10px;">
+            Premium Trading Technology · stratedgealgo.com
+          </span>
+        </div>
+
+        <div class="meta-line">
+          <button
+            type="button"
+            class="btn-ghost"
+            style="padding: 4px 10px; min-height: 28px;"
+            @click="store.openAuthModal('login')"
+          >
+            Member Login / Register
+          </button>
+          <span class="meta-sep" aria-hidden="true">·</span>
+          <button
+            type="button"
+            class="btn-ghost"
+            style="padding: 4px 10px; min-height: 28px;"
+            @click="setView('dashboard')"
+          >
+            Customer Dashboard
+          </button>
+          <span class="meta-sep" aria-hidden="true">·</span>
+          <button
+            type="button"
+            class="btn-ghost"
+            style="padding: 4px 10px; min-height: 28px;"
+            @click="setView('admin')"
+          >
+            Admin Ops
+          </button>
+          <span class="meta-sep" aria-hidden="true">·</span>
+          <a href="/sitemap.xml" target="_blank" style="color: var(--text-muted);">
+            XML Sitemap
+          </a>
+        </div>
+      </div>
+    </footer>
+  </div>
+</template>

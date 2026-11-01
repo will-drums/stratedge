@@ -1,0 +1,6 @@
+{
+  "name": "StratEdge Algo — Institutional Trading Indicators & Automated Delivery",
+  "description": "Institution-grade algorithmic trading indicators for day trading, swing trading, and scalping on TradingView and thinkorswim with instant automated license delivery.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
